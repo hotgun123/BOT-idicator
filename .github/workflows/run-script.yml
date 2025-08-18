@@ -2,8 +2,8 @@ name: Run Python Script every 2 hours
 
 on:
   schedule:
-    - cron: "0 */2 * * *"   # chạy mỗi 2 tiếng (UTC)
-  workflow_dispatch:        # để có nút Run workflow test thủ công
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
 
 jobs:
   run-script:
@@ -17,17 +17,21 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install TA-Lib dependencies
+      - name: Install TA-Lib from source
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential
-          sudo apt-get install -y libta-lib0 libta-lib0-dev
+          sudo apt-get install -y build-essential wget
+          wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+          tar -xvzf ta-lib-0.4.0-src.tar.gz
+          cd ta-lib
+          ./configure --prefix=/usr
+          make
+          sudo make install
 
       - name: Install Python dependencies
         run: |
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run script
         run: python script.py

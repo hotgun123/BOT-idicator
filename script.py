@@ -1,17 +1,18 @@
 import ccxt
-import talib
 import numpy as np
-import logging
-from datetime import datetime
-import time
+import pandas as pd
 import requests
 import threading
 import yfinance as yf
-import pandas as pd
+from tradingview_ta import TA_Handler, Interval
 import json
 import os
 from pathlib import Path
+from datetime import datetime, timedelta
+import time
+import logging
 from dotenv import load_dotenv
+import ta  # Thay thế TA-Lib với thư viện ta
 
 # Load environment variables
 load_dotenv()
@@ -57,7 +58,8 @@ EXNESS_SYMBOLS = {
 }
 
 # Cấu hình
-SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'XAU/USD', 'WTI/USD']
+# Chỉ phân tích crypto; tạm thời bỏ vàng và dầu do nguồn dữ liệu không ổn định
+SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT']
 TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
 CANDLE_LIMIT = 200
 SIGNAL_THRESHOLD = 0.6 # Giảm xuống 40% để dễ có tín hiệu hơn
@@ -200,15 +202,15 @@ def update_prediction_results():
 def get_evaluation_time(timeframe):
     """Tính thời gian cần thiết để đánh giá dự đoán dựa trên timeframe"""
     timeframe_hours = {
-        '1h': 2,    # Đánh giá sau 2 giờ
-        '2h': 4,    # Đánh giá sau 4 giờ
-        '4h': 8,    # Đánh giá sau 8 giờ
-        '6h': 12,   # Đánh giá sau 12 giờ
-        '8h': 16,   # Đánh giá sau 16 giờ
-        '12h': 24,  # Đánh giá sau 24 giờ
-        '1d': 48,   # Đánh giá sau 48 giờ
-        '3d': 144,  # Đánh giá sau 6 ngày
-        '1w': 336   # Đánh giá sau 14 ngày
+        '1h': 3,    # Đánh giá sau 2 giờ
+        '2h': 6,    # Đánh giá sau 4 giờ
+        '4h': 12,    # Đánh giá sau 8 giờ
+        '6h': 18,   # Đánh giá sau 12 giờ
+        '8h': 24,   # Đánh giá sau 16 giờ
+        '12h': 36,  # Đánh giá sau 24 giờ
+        '1d': 72,   # Đánh giá sau 48 giờ
+        '3d': 216,  # Đánh giá sau 6 ngày
+        '1w': 672   # Đánh giá sau 14 ngày
     }
     return timeframe_hours.get(timeframe, 24) * 3600  # Chuyển sang giây
 
@@ -742,9 +744,9 @@ def find_support_resistance(highs, lows, current_price):
 
 def calculate_pivot_points(highs, lows, closes):
     """Tính các mức Pivot Points (Classic)"""
-    high = highs[-1]
-    low = lows[-1]
-    close = closes[-1]
+    high = highs.iloc[-1] if hasattr(highs, 'iloc') else highs[-1]
+    low = lows.iloc[-1] if hasattr(lows, 'iloc') else lows[-1]
+    close = closes.iloc[-1] if hasattr(closes, 'iloc') else closes[-1]
     pivot = (high + low + close) / 3
     r1 = (2 * pivot) - low
     s1 = (2 * pivot) - high
@@ -756,43 +758,59 @@ def calculate_pivot_points(highs, lows, closes):
 
 def calculate_volume_profile(highs, lows, volumes, bins=10):
     """Tính Volume Profile đơn giản (phân bố khối lượng theo mức giá)"""
-    price_range = max(highs[-50:]) - min(lows[-50:])
+    # Chuyển đổi sang list nếu là pandas Series
+    highs_list = highs.tolist() if hasattr(highs, 'tolist') else highs
+    lows_list = lows.tolist() if hasattr(lows, 'tolist') else lows
+    volumes_list = volumes.tolist() if hasattr(volumes, 'tolist') else volumes
+    
+    price_range = max(highs_list[-50:]) - min(lows_list[-50:])
     bin_size = price_range / bins
     volume_bins = [0] * bins
-    for i in range(len(highs[-50:])):
-        price = (highs[-50:][i] + lows[-50:][i]) / 2
-        bin_index = min(int((price - min(lows[-50:])) / bin_size), bins - 1)
-        volume_bins[bin_index] += volumes[-50:][i]
-    max_volume_price = min(lows[-50:]) + volume_bins.index(max(volume_bins)) * bin_size
+    for i in range(len(highs_list[-50:])):
+        price = (highs_list[-50:][i] + lows_list[-50:][i]) / 2
+        bin_index = min(int((price - min(lows_list[-50:])) / bin_size), bins - 1)
+        volume_bins[bin_index] += volumes_list[-50:][i]
+    max_volume_price = min(lows_list[-50:]) + volume_bins.index(max(volume_bins)) * bin_size
     return max_volume_price
 
 def calculate_vwap(highs, lows, closes, volumes):
     """Tính VWAP (Volume Weighted Average Price)"""
-    typical_prices = (highs[-20:] + lows[-20:] + closes[-20:]) / 3
-    vwap = np.sum(typical_prices * volumes[-20:]) / np.sum(volumes[-20:])
+    # Chuyển đổi sang numpy array nếu cần
+    highs_array = highs.values if hasattr(highs, 'values') else np.array(highs)
+    lows_array = lows.values if hasattr(lows, 'values') else np.array(lows)
+    closes_array = closes.values if hasattr(closes, 'values') else np.array(closes)
+    volumes_array = volumes.values if hasattr(volumes, 'values') else np.array(volumes)
+    
+    typical_prices = (highs_array[-20:] + lows_array[-20:] + closes_array[-20:]) / 3
+    vwap = np.sum(typical_prices * volumes_array[-20:]) / np.sum(volumes_array[-20:])
     return vwap
 
 def detect_price_patterns(highs, lows, closes):
     """Phát hiện các mô hình giá"""
     pattern = 'None'
     
+    # Chuyển đổi sang list nếu là pandas Series
+    highs_list = highs.tolist() if hasattr(highs, 'tolist') else highs
+    lows_list = lows.tolist() if hasattr(lows, 'tolist') else lows
+    closes_list = closes.tolist() if hasattr(closes, 'tolist') else closes
+    
     # Đỉnh đầu vai (Head and Shoulders)
-    if len(highs) >= 7:
-        left_shoulder = highs[-5] > highs[-6] and highs[-5] > highs[-4]
-        head = highs[-3] > highs[-5] and highs[-3] > highs[-1]
-        right_shoulder = highs[-1] > highs[-2] and highs[-1] < highs[-3]
+    if len(highs_list) >= 7:
+        left_shoulder = highs_list[-5] > highs_list[-6] and highs_list[-5] > highs_list[-4]
+        head = highs_list[-3] > highs_list[-5] and highs_list[-3] > highs_list[-1]
+        right_shoulder = highs_list[-1] > highs_list[-2] and highs_list[-1] < highs_list[-3]
         if left_shoulder and head and right_shoulder:
             pattern = 'Head and Shoulders'
     
     # Đỉnh đôi (Double Top)
-    elif len(highs) >= 5:
-        if abs(highs[-3] - highs[-1]) / highs[-3] < 0.01 and highs[-3] > highs[-2] and highs[-1] > highs[-2]:
+    elif len(highs_list) >= 5:
+        if abs(highs_list[-3] - highs_list[-1]) / highs_list[-3] < 0.01 and highs_list[-3] > highs_list[-2] and highs_list[-1] > highs_list[-2]:
             pattern = 'Double Top'
     
     # Cờ (Flag)
-    elif len(highs) >= 10:
-        uptrend = all(closes[i] > closes[i-1] for i in range(-10, -5))
-        consolidation = max(highs[-5:]) - min(lows[-5:]) < 0.02 * closes[-1]
+    elif len(highs_list) >= 10:
+        uptrend = all(closes_list[i] > closes_list[i-1] for i in range(-10, -5))
+        consolidation = max(highs_list[-5:]) - min(lows_list[-5:]) < 0.02 * closes_list[-1]
         if uptrend and consolidation:
             pattern = 'Flag'
     
@@ -859,57 +877,63 @@ def detect_candlestick_patterns(opens, highs, lows, closes):
     """Phát hiện các mô hình nến Nhật"""
     patterns = []
     
+    # Chuyển đổi sang list nếu là pandas Series
+    opens_list = opens.tolist() if hasattr(opens, 'tolist') else opens
+    highs_list = highs.tolist() if hasattr(highs, 'tolist') else highs
+    lows_list = lows.tolist() if hasattr(lows, 'tolist') else lows
+    closes_list = closes.tolist() if hasattr(closes, 'tolist') else closes
+    
     # Nến đơn
-    body_size = abs(opens[-1] - closes[-1])
-    candle_range = highs[-1] - lows[-1]
+    body_size = abs(opens_list[-1] - closes_list[-1])
+    candle_range = highs_list[-1] - lows_list[-1]
     if candle_range > 0:
         # Doji
         if body_size / candle_range < 0.1:
             patterns.append('Doji')
         # Hammer
-        if (closes[-1] > opens[-1] and 
-            (highs[-1] - closes[-1]) / candle_range < 0.2 and 
-            (opens[-1] - lows[-1]) / candle_range > 0.6):
+        if (closes_list[-1] > opens_list[-1] and 
+            (highs_list[-1] - closes_list[-1]) / candle_range < 0.2 and 
+            (opens_list[-1] - lows_list[-1]) / candle_range > 0.6):
             patterns.append('Hammer')
         # Shooting Star
-        if (closes[-1] < opens[-1] and 
-            (highs[-1] - opens[-1]) / candle_range > 0.6 and 
-            (closes[-1] - lows[-1]) / candle_range < 0.2):
+        if (closes_list[-1] < opens_list[-1] and 
+            (highs_list[-1] - opens_list[-1]) / candle_range > 0.6 and 
+            (closes_list[-1] - lows_list[-1]) / candle_range < 0.2):
             patterns.append('Shooting Star')
         # Spinning Top
-        if body_size / candle_range < 0.3 and (highs[-1] - closes[-1]) / candle_range > 0.3 and (opens[-1] - lows[-1]) / candle_range > 0.3:
+        if body_size / candle_range < 0.3 and (highs_list[-1] - closes_list[-1]) / candle_range > 0.3 and (opens_list[-1] - lows_list[-1]) / candle_range > 0.3:
             patterns.append('Spinning Top')
 
     # Nến đôi
-    if len(opens) >= 2:
+    if len(opens_list) >= 2:
         # Bullish Engulfing
-        if (closes[-2] < opens[-2] and closes[-1] > opens[-1] and 
-            closes[-1] > opens[-2] and opens[-1] < closes[-2]):
+        if (closes_list[-2] < opens_list[-2] and closes_list[-1] > opens_list[-1] and 
+            closes_list[-1] > opens_list[-2] and opens_list[-1] < closes_list[-2]):
             patterns.append('Bullish Engulfing')
         # Bearish Engulfing
-        if (closes[-2] > opens[-2] and closes[-1] < opens[-1] and 
-            closes[-1] < opens[-2] and opens[-1] > closes[-2]):
+        if (closes_list[-2] > opens_list[-2] and closes_list[-1] < opens_list[-1] and 
+            closes_list[-1] < opens_list[-2] and opens_list[-1] > closes_list[-2]):
             patterns.append('Bearish Engulfing')
 
     # Nến ba
-    if len(opens) >= 3:
+    if len(opens_list) >= 3:
         # Morning Star
-        if (closes[-3] < opens[-3] and 
-            abs(closes[-2] - opens[-2]) / (highs[-2] - lows[-2]) < 0.3 and 
-            closes[-1] > opens[-1] and closes[-1] > (highs[-3] + lows[-3]) / 2):
+        if (closes_list[-3] < opens_list[-3] and 
+            abs(closes_list[-2] - opens_list[-2]) / (highs_list[-2] - lows_list[-2]) < 0.3 and 
+            closes_list[-1] > opens_list[-1] and closes_list[-1] > (highs_list[-3] + lows_list[-3]) / 2):
             patterns.append('Morning Star')
         # Evening Star
-        if (closes[-3] > opens[-3] and 
-            abs(closes[-2] - opens[-2]) / (highs[-2] - lows[-2]) < 0.3 and 
-            closes[-1] < opens[-1] and closes[-1] < (highs[-3] + lows[-3]) / 2):
+        if (closes_list[-3] > opens_list[-3] and 
+            abs(closes_list[-2] - opens_list[-2]) / (highs_list[-2] - lows_list[-2]) < 0.3 and 
+            closes_list[-1] < opens_list[-1] and closes_list[-1] < (highs_list[-3] + lows_list[-3]) / 2):
             patterns.append('Evening Star')
         # Three White Soldiers
-        if (all(closes[i] > opens[i] and closes[i] > closes[i-1] for i in [-3, -2, -1]) and
-            all((highs[i] - closes[i]) / (highs[i] - lows[i]) < 0.2 for i in [-3, -2, -1])):
+        if (all(closes_list[i] > opens_list[i] and closes_list[i] > closes_list[i-1] for i in [-3, -2, -1]) and
+            all((highs_list[i] - closes_list[i]) / (highs_list[i] - lows_list[i]) < 0.2 for i in [-3, -2, -1])):
             patterns.append('Three White Soldiers')
         # Three Black Crows
-        if (all(closes[i] < opens[i] and closes[i] < closes[i-1] for i in [-3, -2, -1]) and
-            all((closes[i] - lows[i]) / (highs[i] - lows[i]) < 0.2 for i in [-3, -2, -1])):
+        if (all(closes_list[i] < opens_list[i] and closes_list[i] < closes_list[i-1] for i in [-3, -2, -1]) and
+            all((closes_list[i] - lows_list[i]) / (highs_list[i] - lows_list[i]) < 0.2 for i in [-3, -2, -1])):
             patterns.append('Three Black Crows')
 
     return patterns
@@ -918,18 +942,21 @@ def detect_elliott_wave(highs, lows, closes):
     """Phát hiện mô hình Elliott Wave đơn giản"""
     wave_pattern = 'None'
     
-    if len(closes) >= 10:
+    # Chuyển đổi sang list nếu là pandas Series
+    closes_list = closes.tolist() if hasattr(closes, 'tolist') else closes
+    
+    if len(closes_list) >= 10:
         # Tìm 5 sóng tăng (Wave 1-5)
         waves = []
         current_wave = 0
         wave_start = 0
         
-        for i in range(1, len(closes)):
-            if closes[i] > closes[i-1]:  # Sóng tăng
+        for i in range(1, len(closes_list)):
+            if closes_list[i] > closes_list[i-1]:  # Sóng tăng
                 if current_wave == 0 or current_wave % 2 == 0:  # Bắt đầu sóng mới
                     current_wave += 1
                     wave_start = i-1
-            elif closes[i] < closes[i-1]:  # Sóng giảm
+            elif closes_list[i] < closes_list[i-1]:  # Sóng giảm
                 if current_wave % 2 == 1:  # Kết thúc sóng tăng
                     waves.append((wave_start, i-1, 'up'))
                     current_wave += 1
@@ -951,181 +978,175 @@ def detect_elliott_wave(highs, lows, closes):
     return wave_pattern
 
 def analyze_timeframe(data, timeframe, current_price, symbol=None):
-    """Phân tích kỹ thuật trên một khung thời gian với các chỉ báo và mô hình"""
-    close = data['close']
-    high = data['high']
-    low = data['low']
-    volume = data['volume']
-    open = data['open']
+    """Phân tích kỹ thuật tối ưu với 12 chỉ số cốt lõi và trọng số cao cho divergence"""
+    # Chuyển đổi numpy array sang pandas Series để tương thích với thư viện ta
+    close = pd.Series(data['close'])
+    high = pd.Series(data['high'])
+    low = pd.Series(data['low'])
+    volume = pd.Series(data['volume'])
+    open = pd.Series(data['open'])
+    
+    # Helper function để lấy giá trị cuối cùng
+    def get_last(series):
+        return series.iloc[-1] if hasattr(series, 'iloc') else series[-1]
+    
+    def get_last_n(series, n):
+        if hasattr(series, 'iloc'):
+            return series.iloc[-n:].tolist()
+        else:
+            return series[-n:]
 
-    # Chỉ báo động lượng - Giảm period để giảm lag
-    rsi = talib.RSI(close, timeperiod=7)  # Từ 14 -> 7
-    stoch_k, stoch_d = talib.STOCH(high, low, close, fastk_period=7, slowk_period=3, slowd_period=3)  # Từ 14 -> 7
-    macd, signal, _ = talib.MACD(close, fastperiod=6, slowperiod=13, signalperiod=4)  # Từ 12,26,9 -> 6,13,4
-    cci = talib.CCI(high, low, close, timeperiod=7)  # Từ 14 -> 7
-    roc = talib.ROC(close, timeperiod=6)  # Từ 12 -> 6
+    # === 1. TREND INDICATORS (3 chỉ số cốt lõi) ===
+    ema20 = ta.trend.ema_indicator(close, window=20)              # Trend ngắn hạn
+    ema50 = ta.trend.ema_indicator(close, window=50)              # Trend trung hạn  
+    adx = ta.trend.adx(high, low, close, window=7)      # Trend strength
 
-    # Chỉ báo xu hướng - Giảm period để phản ứng nhanh hơn
-    sma20 = talib.SMA(close, timeperiod=20)  # Thêm SMA20
-    sma50 = talib.SMA(close, timeperiod=50)
-    ema20 = talib.EMA(close, timeperiod=20)  # Thêm EMA20
-    ema50 = talib.EMA(close, timeperiod=50)
-    wma20 = talib.WMA(close, timeperiod=20)  # Thêm WMA20
-    wma50 = talib.WMA(close, timeperiod=50)
-    ema100 = talib.EMA(close, timeperiod=100)  # Từ 200 -> 100
-    adx = talib.ADX(high, low, close, timeperiod=7)  # Từ 14 -> 7
-    sar = talib.SAR(high, low, acceleration=0.02, maximum=0.2)
-    upper, middle, lower = talib.BBANDS(close, timeperiod=10, nbdevup=2, nbdevdn=2)  # Từ 20 -> 10
+    # === 2. MOMENTUM INDICATORS (3 chỉ số cốt lõi) ===
+    rsi = ta.momentum.rsi(close, window=7)                 # Momentum chuẩn
+    stoch_k = ta.momentum.stoch(high, low, close, window=7)  # Stochastic %K
+    stoch_d = ta.momentum.stoch_signal(high, low, close, window=7)  # Stochastic %D
+    macd_line = ta.trend.macd(close, window_fast=6, window_slow=13)  # MACD line
+    macd_signal = ta.trend.macd_signal(close, window_fast=6, window_slow=13, window_sign=4)  # MACD signal
+    macd_hist = ta.trend.macd_diff(close, window_fast=6, window_slow=13, window_sign=4)  # MACD histogram
 
-    def calculate_ichimoku(high, low, close):
-        tenkan = (talib.MAX(high, timeperiod=5) + talib.MIN(low, timeperiod=5)) / 2  # Từ 9 -> 5
-        kijun = (talib.MAX(high, timeperiod=13) + talib.MIN(low, timeperiod=13)) / 2  # Từ 26 -> 13
-        senkou_a = (tenkan + kijun) / 2
-        senkou_b = (talib.MAX(high, timeperiod=26) + talib.MIN(low, timeperiod=26)) / 2  # Từ 52 -> 26
-        chikou = close
-        return tenkan, kijun, senkou_a, senkou_b, chikou
+    # === 3. VOLATILITY INDICATORS (2 chỉ số cốt lõi) ===
+    bb_upper = ta.volatility.bollinger_hband(close, window=10, window_dev=2)       # BB Upper
+    bb_middle = ta.volatility.bollinger_mavg(close, window=10)       # BB Middle
+    bb_lower = ta.volatility.bollinger_lband(close, window=10, window_dev=2)       # BB Lower
+    atr = ta.volatility.average_true_range(high, low, close, window=7)      # Volatility thuần
 
-    tenkan, kijun, senkou_a, senkou_b, chikou = calculate_ichimoku(high, low, close)
+    # === 4. VOLUME INDICATORS (2 chỉ số cốt lõi) ===
+    obv = ta.volume.on_balance_volume(close, volume)                   # Volume flow
+    vwap = calculate_vwap(high, low, close, volume) # Volume price level
 
-    # Chỉ báo khối lượng - Giảm period để phản ứng nhanh hơn
-    obv = talib.OBV(close, volume)
-    mfi = talib.MFI(high, low, close, volume, timeperiod=7)  # Từ 14 -> 7
-    volume_profile = calculate_volume_profile(high, low, volume)
-    vwap = calculate_vwap(high, low, close, volume)
-
-    # Chỉ báo hỗn hợp - Giảm period để phản ứng nhanh hơn
-    atr = talib.ATR(high, low, close, timeperiod=7)  # Từ 14 -> 7
+    # === 5. SUPPORT/RESISTANCE (2 chỉ số cốt lõi) ===
     pivot_points = calculate_pivot_points(high, low, close)
     support, resistance = find_support_resistance(high, low, current_price)
 
-    # Mô hình giá
+    # === 6. MÔ HÌNH GIÁ VÀ NẾN ===
     price_pattern = detect_price_patterns(high, low, close)
-
-    # Mô hình nến Nhật
     candlestick_patterns = detect_candlestick_patterns(open, high, low, close)
     
-    # Mô hình Elliott Wave
-    elliott_wave = detect_elliott_wave(high, low, close)
-    
-    # Smart Money Concepts (SMC)
+    # === 7. SMART MONEY CONCEPTS ===
     order_blocks = detect_order_blocks(high, low, close, volume)
     fvgs = detect_fair_value_gaps(high, low, close)
     liquidity_zones = detect_liquidity_zones(high, low, close, volume)
     mitigation_zones = detect_mitigation_zones(high, low, close)
     
-    # Price Action Patterns
-    price_action_patterns = detect_price_action_patterns(high, low, close, volume)
-    
     # Phân tích SMC và Price Action
     smc_signals = analyze_smc_signals(current_price, order_blocks, fvgs, liquidity_zones, mitigation_zones)
-    pa_signals = analyze_price_action_signals(current_price, price_action_patterns, high, low, close)
     
-    # Phân tích chi tiết mô hình nến
-    candlestick_analysis = interpret_candlestick_patterns(candlestick_patterns, current_price, ema50[-1])
+    # === 8. PHÂN TÍCH DIVERGENCE/CONVERGENCE - TRỌNG SỐ CAO ===
+    divergences = analyze_all_divergences(close, rsi, macd_line, volume)
+    divergence_consensus = calculate_divergence_consensus(divergences)
     
-    # Tính toán điểm entry hợp lý
-    entry_points = calculate_entry_points(current_price, high, low, close, rsi, upper, lower, ema50, pivot_points, support, resistance)
-
-    candlestick_signal = 'Hold'
-    if candlestick_analysis['bullish_count'] > candlestick_analysis['bearish_count']:
-        candlestick_signal = 'Long'
-    elif candlestick_analysis['bearish_count'] > candlestick_analysis['bullish_count']:
-        candlestick_signal = 'Short'
-    elif candlestick_analysis['neutral_count'] > 0:
-        # Nếu chỉ có mô hình trung tính, phân tích chi tiết hơn
-        for pattern in candlestick_patterns:
-            if pattern in ['Doji', 'Spinning Top']:
-                # Doji và Spinning Top cần xem xét vị trí
-                if current_price > ema50[-1]:
-                    candlestick_signal = 'Short'  # Ở vùng kháng cự
-                else:
-                    candlestick_signal = 'Long'   # Ở vùng hỗ trợ
-                break
-
-    # Tín hiệu từ các chỉ báo - Tối ưu để giảm lag và tăng độ nhạy
+    # === 9. TÍNH TOÁN TÍN HIỆU CƠ BẢN ===
+    
+    # RSI Signal
     rsi_signal = 'Hold'
-    if rsi[-1] < 25:  # Từ 20 -> 25 (nhạy hơn)
+    if get_last(rsi) < 25:
         rsi_signal = 'Long'
-    elif rsi[-1] > 75:  # Từ 80 -> 75 (nhạy hơn)
+    elif get_last(rsi) > 75:
         rsi_signal = 'Short'
-
+    
+    # Stochastic Signal
     stoch_signal = 'Hold'
-    if stoch_k[-1] < 20 and stoch_k[-1] > stoch_d[-1]:  # Từ 15 -> 20
+    if get_last(stoch_k) < 20 and get_last(stoch_k) > get_last(stoch_d):
         stoch_signal = 'Long'
-    elif stoch_k[-1] > 80 and stoch_k[-1] < stoch_d[-1]:  # Từ 85 -> 80
+    elif get_last(stoch_k) > 80 and get_last(stoch_k) < get_last(stoch_d):
         stoch_signal = 'Short'
 
+    # MACD Signal
     macd_signal = 'Hold'
-    if macd[-2] < signal[-2] and macd[-1] > signal[-1] and abs(macd[-1] - signal[-1]) > abs(macd[-2] - signal[-2]):
-        macd_signal = 'Long'
-    elif macd[-2] > signal[-2] and macd[-1] < signal[-1] and abs(macd[-1] - signal[-1]) > abs(macd[-2] - signal[-2]):
-        macd_signal = 'Short'
+    try:
+        macd_line_last_2 = get_last_n(macd_line, 2)
+        macd_signal_last_2 = get_last_n(macd_signal, 2)
+        if (not np.isnan(macd_line_last_2[0]) and not np.isnan(macd_signal_last_2[0]) and
+            macd_line_last_2[0] < macd_signal_last_2[0] and get_last(macd_line) > get_last(macd_signal)):
+            macd_signal = 'Long'
+        elif (not np.isnan(macd_line_last_2[0]) and not np.isnan(macd_signal_last_2[0]) and
+              macd_line_last_2[0] > macd_signal_last_2[0] and get_last(macd_line) < get_last(macd_signal)):
+            macd_signal = 'Short'
+    except:
+        pass
 
-    cci_signal = 'Hold'
-    if cci[-1] < -100:  # Từ -150 -> -100 (nhạy hơn)
-        cci_signal = 'Long'
-    elif cci[-1] > 100:  # Từ 150 -> 100 (nhạy hơn)
-        cci_signal = 'Short'
-
-    roc_signal = 'Hold'
-    if roc[-1] > 3:  # Từ 5 -> 3 (nhạy hơn)
-        roc_signal = 'Long'
-    elif roc[-1] < -3:  # Từ -5 -> -3 (nhạy hơn)
-        roc_signal = 'Short'
-
-    # Tín hiệu MA - Sử dụng MA ngắn hạn để giảm lag
+    # MA Signal
     ma_signal = 'Hold'
-    ma_distance = abs(sma20[-1] - ema100[-1]) / ema100[-1]
-    if sma20[-1] > ema100[-1] and ema20[-1] > ema100[-1] and wma20[-1] > ema100[-1] and ma_distance > 0.01:
-        ma_signal = 'Long'  # Sử dụng MA20 thay vì MA50
-    elif sma20[-1] < ema100[-1] and ema20[-1] < ema100[-1] and wma20[-1] < ema100[-1] and ma_distance > 0.01:
-        ma_signal = 'Short'  # Sử dụng MA20 thay vì MA50
+    ma_distance = abs(get_last(ema20) - get_last(ema50)) / get_last(ema50)
+    if get_last(ema20) > get_last(ema50) and ma_distance > 0.01:
+        ma_signal = 'Long'
+    elif get_last(ema20) < get_last(ema50) and ma_distance > 0.01:
+        ma_signal = 'Short'
 
+    # ADX Signal
     adx_signal = 'Hold'
-    if adx[-1] > 25:  # Từ 35 -> 25 (nhạy hơn)
-        if close[-1] > ema20[-1]:  # Sử dụng EMA20 thay vì EMA50
+    if get_last(adx) > 25:
+        if get_last(close) > get_last(ema20):
             adx_signal = 'Long'
-        elif close[-1] < ema20[-1]:
+        elif get_last(close) < get_last(ema20):
             adx_signal = 'Short'
 
-    # Thêm các chỉ báo leading (dẫn đầu) để giảm lag
-    # 1. Williams %R - Chỉ báo momentum leading
-    williams_r = talib.WILLR(high, low, close, timeperiod=7)
-    williams_signal = 'Hold'
-    if williams_r[-1] < -80:
-        williams_signal = 'Long'
-    elif williams_r[-1] > -20:
-        williams_signal = 'Short'
+    # Bollinger Bands Signal
+    bb_signal = 'Hold'
+    if current_price <= get_last(bb_lower) * 0.995:
+        bb_signal = 'Long'
+    elif current_price >= get_last(bb_upper) * 1.005:
+        bb_signal = 'Short'
 
-    # 2. Ultimate Oscillator - Chỉ báo momentum leading
-    ult_osc = talib.ULTOSC(high, low, close, timeperiod1=7, timeperiod2=14, timeperiod3=28)
-    ult_osc_signal = 'Hold'
-    if ult_osc[-1] < 30:
-        ult_osc_signal = 'Long'
-    elif ult_osc[-1] > 70:
-        ult_osc_signal = 'Short'
+    # OBV Signal
+    obv_signal = 'Hold'
+    obv_slope = get_last(obv) - get_last_n(obv, 10)[0]
+    obv_change = obv_slope / get_last_n(obv, 10)[0] if get_last_n(obv, 10)[0] != 0 else 0
+    if obv_change > 0.05 and get_last(close) > get_last(ema50):
+        obv_signal = 'Long'
+    elif obv_change < -0.05 and get_last(close) < get_last(ema50):
+        obv_signal = 'Short'
 
-    # 3. Commodity Channel Index ngắn hạn
-    cci_short = talib.CCI(high, low, close, timeperiod=5)
-    cci_short_signal = 'Hold'
-    if cci_short[-1] < -100:
-        cci_short_signal = 'Long'
-    elif cci_short[-1] > 100:
-        cci_short_signal = 'Short'
+    # VWAP Signal
+    vwap_signal = 'Hold'
+    vwap_distance = abs(current_price - vwap) / vwap
+    if current_price > vwap and vwap_distance > 0.02:
+        vwap_signal = 'Long'
+    elif current_price < vwap and vwap_distance > 0.02:
+        vwap_signal = 'Short'
 
-    # 4. Momentum ngắn hạn
-    momentum = talib.MOM(close, timeperiod=5)
-    momentum_signal = 'Hold'
-    if momentum[-1] > 0:
-        momentum_signal = 'Long'
-    elif momentum[-1] < 0:
-        momentum_signal = 'Short'
+    # ATR Signal
+    atr_signal = 'Hold'
+    atr_avg = np.mean(get_last_n(atr, 10))
+    if get_last(atr) > atr_avg * 1.5:
+        if get_last(close) > get_last(ema50):
+            atr_signal = 'Long'
+        elif get_last(close) < get_last(ema50):
+            atr_signal = 'Short'
 
-    # 5. Chỉ báo đặc biệt cho hàng hóa (vàng và dầu)
+    # Pivot Points Signal
+    pivot_signal = 'Hold'
+    pivot_distance = min(abs(current_price - pivot_points['s1']), abs(current_price - pivot_points['r1'])) / current_price
+    if current_price < pivot_points['s1'] and pivot_distance > 0.01:
+        pivot_signal = 'Long'
+    elif current_price > pivot_points['r1'] and pivot_distance > 0.01:
+        pivot_signal = 'Short'
+
+    # Candlestick Signal
+    candlestick_signal = 'Hold'
+    if any(p in ['Hammer', 'Bullish Engulfing', 'Morning Star', 'Three White Soldiers'] for p in candlestick_patterns):
+        candlestick_signal = 'Long'
+    elif any(p in ['Shooting Star', 'Bearish Engulfing', 'Evening Star', 'Three Black Crows'] for p in candlestick_patterns):
+        candlestick_signal = 'Short'
+
+    # Price Pattern Signal
+    price_pattern_signal = 'Hold'
+    if price_pattern in ['Head and Shoulders', 'Double Top']:
+        price_pattern_signal = 'Short'
+    elif price_pattern == 'Flag' and get_last(close) > get_last(ema50):
+        price_pattern_signal = 'Long'
+
+    # === 10. TÍN HIỆU ĐẶC BIỆT CHO HÀNG HÓA ===
     commodity_signals = {}
     if symbol in ['XAU/USD', 'WTI/USD']:
-        # Aroon Indicator - tốt cho hàng hóa
-        aroon_up, aroon_down = talib.AROON(high, low, timeperiod=14)
+        # Aroon Indicator
+        aroon_up = ta.trend.aroon_up(high, low, window=14)
+        aroon_down = ta.trend.aroon_down(high, low, window=14)
         aroon_signal = 'Hold'
         if aroon_up[-1] > 70 and aroon_down[-1] < 30:
             aroon_signal = 'Long'
@@ -1133,30 +1154,11 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             aroon_signal = 'Short'
         commodity_signals['aroon_signal'] = aroon_signal
         
-        # Commodity Selection Index (CSI) - chỉ báo đặc biệt cho hàng hóa
-        # CSI = (ADX * ATR * 100) / (EMA * 100)
-        adx_value = adx[-1] if not np.isnan(adx[-1]) else 25
-        atr_value = atr[-1] if not np.isnan(atr[-1]) else np.mean(atr[-10:])
-        ema_value = ema50[-1] if not np.isnan(ema50[-1]) else current_price
-        
-        if ema_value > 0:
-            csi = (adx_value * atr_value * 100) / (ema_value * 100)
-            csi_signal = 'Hold'
-            if csi > 1000:  # CSI cao = xu hướng mạnh
-                if close[-1] > ema50[-1]:
-                    csi_signal = 'Long'
-                else:
-                    csi_signal = 'Short'
-            commodity_signals['csi_signal'] = csi_signal
-        else:
-            commodity_signals['csi_signal'] = 'Hold'
-        
-        # Seasonal Analysis cho hàng hóa
+        # Seasonal Analysis
         current_month = datetime.now().month
         seasonal_signal = 'Hold'
         
         if symbol == 'XAU/USD':  # Vàng
-            # Vàng thường tăng vào tháng 1, 8, 9, 12
             bullish_months = [1, 8, 9, 12]
             bearish_months = [3, 4, 6, 7]
             if current_month in bullish_months:
@@ -1164,7 +1166,6 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             elif current_month in bearish_months:
                 seasonal_signal = 'Short'
         elif symbol == 'WTI/USD':  # Dầu
-            # Dầu thường tăng vào mùa hè (6-8) và mùa đông (12-2)
             bullish_months = [1, 2, 6, 7, 8, 12]
             bearish_months = [3, 4, 5, 9, 10, 11]
             if current_month in bullish_months:
@@ -1174,364 +1175,153 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         
         commodity_signals['seasonal_signal'] = seasonal_signal
 
-    sar_signal = 'Hold'
-    sar_distance = abs(current_price - sar[-1]) / current_price
-    if current_price > sar[-1] and sar_distance > 0.01:  # Thêm điều kiện khoảng cách
-        sar_signal = 'Long'
-    elif current_price < sar[-1] and sar_distance > 0.01:  # Thêm điều kiện khoảng cách
-        sar_signal = 'Short'
-
-    ichimoku_signal = 'Hold'
-    try:
-        if (len(senkou_a) > 0 and len(senkou_b) > 0 and len(tenkan) > 0 and len(kijun) > 0 and
-            len(close) > 26):
-            tenkan_kijun_distance = abs(tenkan[-1] - kijun[-1]) / kijun[-1]
-            if (current_price > max(senkou_a[-1], senkou_b[-1]) and 
-                tenkan[-1] > kijun[-1] and 
-                close[-1] > close[-27] and tenkan_kijun_distance > 0.005):
-                ichimoku_signal = 'Long'  # Thêm điều kiện khoảng cách Tenkan-Kijun
-            elif (current_price < min(senkou_a[-1], senkou_b[-1]) and 
-                  tenkan[-1] < kijun[-1] and 
-                  close[-1] < close[-27] and tenkan_kijun_distance > 0.005):
-                ichimoku_signal = 'Short'  # Thêm điều kiện khoảng cách Tenkan-Kijun
-    except (IndexError, ValueError):
-        ichimoku_signal = 'Hold'
-
-    bb_signal = 'Hold'
-    bb_width = (upper[-1] - lower[-1]) / middle[-1]
-    if current_price <= lower[-1] * 0.995:  # Thêm điều kiện breakout mạnh hơn
-        bb_signal = 'Long'
-    elif current_price >= upper[-1] * 1.005:  # Thêm điều kiện breakout mạnh hơn
-        bb_signal = 'Short'
-
-    obv_signal = 'Hold'
-    obv_slope = obv[-1] - obv[-10]
-    obv_change = obv_slope / obv[-10] if obv[-10] != 0 else 0
-    if obv_change > 0.05 and close[-1] > ema50[-1]:  # Thêm điều kiện thay đổi OBV
-        obv_signal = 'Long'
-    elif obv_change < -0.05 and close[-1] < ema50[-1]:  # Thêm điều kiện thay đổi OBV
-        obv_signal = 'Short'
-
-    mfi_signal = 'Hold'
-    if mfi[-1] < 15:  # Từ 20 -> 15
-        mfi_signal = 'Long'
-    elif mfi[-1] > 85:  # Từ 80 -> 85
-        mfi_signal = 'Short'
-
-    volume_profile_signal = 'Hold'
-    volume_distance = abs(current_price - volume_profile) / volume_profile
-    if current_price > volume_profile and volume_distance > 0.02:  # Thêm điều kiện khoảng cách
-        volume_profile_signal = 'Long'
-    elif current_price < volume_profile and volume_distance > 0.02:  # Thêm điều kiện khoảng cách
-        volume_profile_signal = 'Short'
-
-    vwap_signal = 'Hold'
-    vwap_distance = abs(current_price - vwap) / vwap
-    if current_price > vwap and vwap_distance > 0.02:  # Thêm điều kiện khoảng cách
-        vwap_signal = 'Long'
-    elif current_price < vwap and vwap_distance > 0.02:  # Thêm điều kiện khoảng cách
-        vwap_signal = 'Short'
-
-    atr_signal = 'Hold'
-    atr_avg = np.mean(atr[-10:])
-    if atr[-1] > atr_avg * 1.5:  # Từ 1.2 -> 1.5 (biến động mạnh hơn)
-        if close[-1] > ema50[-1]:
-            atr_signal = 'Long'
-        elif close[-1] < ema50[-1]:
-            atr_signal = 'Short'
-
-    pivot_signal = 'Hold'
-    pivot_distance = min(abs(current_price - pivot_points['s1']), abs(current_price - pivot_points['r1'])) / current_price
-    if current_price < pivot_points['s1'] and pivot_distance > 0.01:  # Thêm điều kiện khoảng cách
-        pivot_signal = 'Long'
-    elif current_price > pivot_points['r1'] and pivot_distance > 0.01:  # Thêm điều kiện khoảng cách
-        pivot_signal = 'Short'
-
-    wyckoff_signal = 'Hold'
-    bb_width = (upper[-1] - lower[-1]) / middle[-1]
-    if bb_width < 0.08 and current_price <= support * 1.01 and obv_change > 0.05:  # Từ 0.1 -> 0.08, thêm điều kiện OBV
-        wyckoff_signal = 'Long'
-    elif bb_width < 0.08 and current_price >= resistance * 0.99 and obv_change < -0.05:  # Từ 0.1 -> 0.08, thêm điều kiện OBV
-        wyckoff_signal = 'Short'
-
-    price_pattern_signal = 'Hold'
-    if price_pattern in ['Head and Shoulders', 'Double Top']:
-        price_pattern_signal = 'Short'
-    elif price_pattern == 'Flag' and close[-1] > ema50[-1]:
-        price_pattern_signal = 'Long'
-
-    candlestick_signal = 'Hold'
-    if any(p in ['Hammer', 'Bullish Engulfing', 'Morning Star', 'Three White Soldiers'] for p in candlestick_patterns):
-        candlestick_signal = 'Long'
-    elif any(p in ['Shooting Star', 'Bearish Engulfing', 'Evening Star', 'Three Black Crows'] for p in candlestick_patterns):
-        candlestick_signal = 'Short'
-
-    elliott_wave_signal = 'Hold'
-    if 'Bullish' in elliott_wave:
-        elliott_wave_signal = 'Long'
-    elif 'Bearish' in elliott_wave:
-        elliott_wave_signal = 'Short'
-
-    signals = [
-        rsi_signal, stoch_signal, macd_signal, cci_signal, roc_signal,
-        ma_signal, adx_signal, sar_signal, ichimoku_signal, bb_signal,
-        obv_signal, mfi_signal, volume_profile_signal, vwap_signal,
-        atr_signal, pivot_signal, wyckoff_signal,
-        price_pattern_signal, candlestick_signal, elliott_wave_signal,
+    # === 11. TẠO DANH SÁCH TÍN HIỆU CƠ BẢN ===
+    basic_signals = [
+        rsi_signal, stoch_signal, macd_signal, ma_signal, adx_signal,
+        bb_signal, obv_signal, vwap_signal, atr_signal, pivot_signal,
+        candlestick_signal, price_pattern_signal,
         smc_signals['order_block_signal'], smc_signals['fvg_signal'], 
-        smc_signals['liquidity_signal'], smc_signals['mitigation_signal'],
-        pa_signals['pattern_signal'], pa_signals['momentum_signal'],
-        # Thêm các chỉ báo leading mới
-        williams_signal, ult_osc_signal, cci_short_signal, momentum_signal
+        smc_signals['liquidity_signal'], smc_signals['mitigation_signal']
     ]
     
-    # Thêm các chỉ báo đặc biệt cho hàng hóa
+    # Thêm tín hiệu hàng hóa
     if symbol in ['XAU/USD', 'WTI/USD']:
-        signals.extend([
+        basic_signals.extend([
             commodity_signals.get('aroon_signal', 'Hold'),
-            commodity_signals.get('csi_signal', 'Hold'),
             commodity_signals.get('seasonal_signal', 'Hold')
         ])
+
+    # === 12. XỬ LÝ DIVERGENCE VỚI TRỌNG SỐ CAO ===
+    divergence_signal = divergence_consensus['signal']
+    divergence_strength = divergence_consensus['strength']
+    divergence_count = divergence_consensus['count']
     
-    # Tăng trọng số cho các tín hiệu cực mạnh
+    # Tạo danh sách tín hiệu cuối cùng với trọng số divergence
+    final_signals = basic_signals.copy()
+    
+    # NẠNG CAO TRỌNG SỐ CHO DIVERGENCE
+    if divergence_signal != 'Hold' and divergence_strength > 0.2:
+        # Thêm divergence signal nhiều lần dựa trên strength
+        divergence_weight = int(divergence_strength * 10)  # Tăng từ 5 lên 10
+        for _ in range(divergence_weight):
+            final_signals.append(divergence_signal)
+        
+        # Thêm cảnh báo đặc biệt cho divergence mạnh
+        if divergence_strength > 0.5:
+            # Thêm thêm 5 lần nữa cho divergence rất mạnh
+            for _ in range(5):
+                final_signals.append(divergence_signal)
+
+    # === 13. TÍN HIỆU CỰC MẠNH (EXTRA WEIGHT) ===
     extra_signals = []
     
-    # 1. RSI cực mạnh (quá mua/quá bán) - Nhạy hơn
-    if rsi[-1] < 20:  # Từ 15 -> 20 (RSI cực thấp)
-        extra_signals.extend(['Long', 'Long', 'Long'])  # Thêm 3 lần
-    elif rsi[-1] > 80:  # Từ 85 -> 80 (RSI cực cao)
-        extra_signals.extend(['Short', 'Short', 'Short'])  # Thêm 3 lần
-    
-    # 2. Stochastic cực mạnh - Nhạy hơn
-    if stoch_k[-1] < 10:  # Từ 5 -> 10 (Stochastic cực thấp)
+    # RSI cực mạnh
+    if get_last(rsi) < 20:
         extra_signals.extend(['Long', 'Long', 'Long'])
-    elif stoch_k[-1] > 90:  # Từ 95 -> 90 (Stochastic cực cao)
+    elif get_last(rsi) > 80:
         extra_signals.extend(['Short', 'Short', 'Short'])
     
-    # 3. CCI cực mạnh - Nhạy hơn
-    if cci[-1] < -150:  # Từ -250 -> -150 (CCI cực thấp)
+    # Stochastic cực mạnh
+    if get_last(stoch_k) < 10:
         extra_signals.extend(['Long', 'Long', 'Long'])
-    elif cci[-1] > 150:  # Từ 250 -> 150 (CCI cực cao)
+    elif get_last(stoch_k) > 90:
         extra_signals.extend(['Short', 'Short', 'Short'])
     
-    # 4. MFI cực mạnh - Nhạy hơn
-    if mfi[-1] < 10:  # Từ 5 -> 10 (MFI cực thấp)
+    # Bollinger Bands breakout mạnh
+    if current_price < get_last(bb_lower) * 0.985:
         extra_signals.extend(['Long', 'Long', 'Long'])
-    elif mfi[-1] > 90:  # Từ 95 -> 90 (MFI cực cao)
-        extra_signals.extend(['Short', 'Short', 'Short'])
-
-    # 5. Williams %R cực mạnh (chỉ báo leading)
-    if williams_r[-1] < -90:
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif williams_r[-1] > -10:
-        extra_signals.extend(['Short', 'Short', 'Short'])
-
-    # 6. Ultimate Oscillator cực mạnh (chỉ báo leading)
-    if ult_osc[-1] < 20:
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif ult_osc[-1] > 80:
-        extra_signals.extend(['Short', 'Short', 'Short'])
-
-    # 7. Momentum cực mạnh (chỉ báo leading)
-    if momentum[-1] > momentum[-2] * 1.5:  # Momentum tăng mạnh
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif momentum[-1] < momentum[-2] * 0.5:  # Momentum giảm mạnh
+    elif current_price > get_last(bb_upper) * 1.015:
         extra_signals.extend(['Short', 'Short', 'Short'])
     
-    # 5. Bollinger Bands cực mạnh (breakout)
-    bb_width = (upper[-1] - lower[-1]) / middle[-1]
-    if current_price < lower[-1] * 0.985:  # Từ 0.99 -> 0.985 (Breakout xuống dưới BB mạnh hơn)
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif current_price > upper[-1] * 1.015:  # Từ 1.01 -> 1.015 (Breakout lên trên BB mạnh hơn)
-        extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 6. Mô hình nến cực mạnh
-    if candlestick_analysis['conclusion'].startswith('🟢') or candlestick_analysis['conclusion'].startswith('🔴'):
-        # Thêm candlestick_signal 3 lần cho tín hiệu mạnh
-        extra_signals.extend([candlestick_signal, candlestick_signal, candlestick_signal])
-    
-    # 7. ADX cực mạnh (xu hướng rất mạnh) - Nhạy hơn
-    if adx[-1] > 30:  # Từ 50 -> 30 (Xu hướng cực mạnh)
-        if close[-1] > ema20[-1]:  # Sử dụng EMA20 thay vì EMA50
+    # MACD crossover mạnh
+    try:
+        if (get_last(macd_line) > get_last(macd_signal) * 1.2 and 
+            get_last_n(macd_line, 2)[0] <= get_last_n(macd_signal, 2)[0]):
             extra_signals.extend(['Long', 'Long', 'Long'])
-        elif close[-1] < ema20[-1]:
+        elif (get_last(macd_line) < get_last(macd_signal) * 0.8 and 
+              get_last_n(macd_line, 2)[0] >= get_last_n(macd_signal, 2)[0]):
             extra_signals.extend(['Short', 'Short', 'Short'])
+    except:
+        pass
 
-    # 8. Price Action cực mạnh (breakout nhanh)
-    if len(close) >= 3:
-        price_change = (close[-1] - close[-3]) / close[-3]
-        if price_change > 0.05:  # Tăng > 5% trong 3 nến
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        elif price_change < -0.05:  # Giảm > 5% trong 3 nến
-            extra_signals.extend(['Short', 'Short', 'Short'])
+    # === 14. TÍNH TOÁN CONSENSUS CUỐI CÙNG ===
+    all_signals = final_signals + extra_signals
     
-    # 8. MACD crossover cực mạnh
-    if macd[-1] > signal[-1] * 1.2 and macd[-2] <= signal[-2]:  # Từ 1.1 -> 1.2 (Bullish crossover mạnh hơn)
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif macd[-1] < signal[-1] * 0.8 and macd[-2] >= signal[-2]:  # Từ 0.9 -> 0.8 (Bearish crossover mạnh hơn)
-        extra_signals.extend(['Short', 'Short', 'Short'])
+    long_count = all_signals.count('Long')
+    short_count = all_signals.count('Short')
+    hold_count = all_signals.count('Hold')
     
-    # 9. Volume breakout cực mạnh
-    avg_volume = np.mean(volume[-20:])
-    if volume[-1] > avg_volume * 5:  # Từ 3 -> 5 (Volume tăng 500%)
-        if close[-1] > close[-2]:  # Giá tăng với volume lớn
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        elif close[-1] < close[-2]:  # Giá giảm với volume lớn
-            extra_signals.extend(['Short', 'Short', 'Short'])
+    total_signals = len(all_signals)
     
-    # 10. Pivot Points cực mạnh
-    if current_price < pivot_points['s3']:  # Từ s2 -> s3 (Breakout dưới S3)
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif current_price > pivot_points['r3']:  # Từ r2 -> r3 (Breakout trên R3)
-        extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 11. ROC cực mạnh (tốc độ thay đổi giá)
-    if roc[-1] > 15:  # Từ 10 -> 15 (Tăng > 15%)
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif roc[-1] < -15:  # Từ -10 -> -15 (Giảm > 15%)
-        extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 12. MA cực mạnh (khoảng cách lớn giữa các MA)
-    ma_distance = abs(sma50[-1] - ema100[-1]) / ema100[-1]
-    if ma_distance > 0.08:  # Từ 0.05 -> 0.08 (Khoảng cách > 8%)
-        if sma50[-1] > ema100[-1]:
-            extra_signals.extend(['Long', 'Long', 'Long'])
+    if total_signals == 0:
+        consensus = 'Hold'
+        confidence = 0.0
+    else:
+        if long_count > short_count:
+            consensus = 'Long'
+            confidence = long_count / total_signals
+        elif short_count > long_count:
+            consensus = 'Short'
+            confidence = short_count / total_signals
         else:
-            extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 13. SAR cực mạnh (khoảng cách lớn với giá)
-    sar_distance = abs(current_price - sar[-1]) / current_price
-    if sar_distance > 0.05:  # Từ 0.03 -> 0.05 (Khoảng cách > 5%)
-        if current_price > sar[-1]:
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        else:
-            extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 14. OBV cực mạnh (dòng tiền mạnh)
-    obv_change = (obv[-1] - obv[-20]) / obv[-20]
-    if obv_change > 0.15:  # Từ 0.1 -> 0.15 (OBV tăng > 15%)
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif obv_change < -0.15:  # Từ -0.1 -> -0.15 (OBV giảm > 15%)
-        extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 15. Volume Profile cực mạnh (tập trung volume cao)
-    volume_concentration = max(volume[-20:]) / np.mean(volume[-20:])
-    if volume_concentration > 5:  # Từ 3 -> 5 (Volume tập trung > 500%)
-        if current_price > volume_profile:
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        else:
-            extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 16. VWAP cực mạnh (khoảng cách lớn với VWAP)
-    vwap_distance = abs(current_price - vwap) / vwap
-    if vwap_distance > 0.08:  # Từ 0.05 -> 0.08 (Khoảng cách > 8%)
-        if current_price > vwap:
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        else:
-            extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 17. ATR cực mạnh (biến động cực cao)
-    atr_avg = np.mean(atr[-20:])
-    if atr[-1] > atr_avg * 3:  # Từ 2 -> 3 (ATR > 300% trung bình)
-        if close[-1] > ema50[-1]:
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        else:
-            extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 18. Wyckoff cực mạnh (pattern tích lũy/phân phối rõ ràng)
-    if bb_width < 0.05 and obv_change > 0.1:  # Từ 0.08 -> 0.05, từ 0.1 -> 0.1 (Tích lũy mạnh hơn)
-        extra_signals.extend(['Long', 'Long', 'Long'])
-    elif bb_width < 0.05 and obv_change < -0.1:  # Từ 0.08 -> 0.05, từ -0.1 -> -0.1 (Phân phối mạnh hơn)
-        extra_signals.extend(['Short', 'Short', 'Short'])
-    
-    # 19. Price Pattern cực mạnh (mô hình giá rõ ràng)
-    if price_pattern in ['Head and Shoulders', 'Double Top']:
-        extra_signals.extend(['Short', 'Short', 'Short'])  # Thêm 3 lần cho mô hình đảo chiều mạnh
-    elif price_pattern == 'Flag':
-        extra_signals.extend(['Long', 'Long', 'Long'])  # Thêm 3 lần cho mô hình tiếp diễn
-    
-    # 20. Chỉ báo hàng hóa cực mạnh (cho vàng và dầu)
-    if symbol in ['XAU/USD', 'WTI/USD']:
-        # Aroon cực mạnh
-        if commodity_signals.get('aroon_signal') == 'Long':
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        elif commodity_signals.get('aroon_signal') == 'Short':
-            extra_signals.extend(['Short', 'Short', 'Short'])
-        
-        # CSI cực mạnh
-        if commodity_signals.get('csi_signal') == 'Long':
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        elif commodity_signals.get('csi_signal') == 'Short':
-            extra_signals.extend(['Short', 'Short', 'Short'])
-        
-        # Seasonal cực mạnh
-        if commodity_signals.get('seasonal_signal') == 'Long':
-            extra_signals.extend(['Long', 'Long', 'Long'])
-        elif commodity_signals.get('seasonal_signal') == 'Short':
-            extra_signals.extend(['Short', 'Short', 'Short'])
+            consensus = 'Hold'
+            confidence = 0.5
 
-    # Thêm các tín hiệu cực mạnh vào danh sách
-    signals.extend(extra_signals)
-    
-    long_count = signals.count('Long')
-    short_count = signals.count('Short')
-    total_signals = len(signals)
+    # === 15. TÍNH TOÁN ĐIỂM ENTRY ===
+    entry_points = calculate_entry_points(current_price, high, low, close, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance)
 
-    signal = 'Hold'
-    consensus_ratio = 0
-    if long_count / total_signals >= SIGNAL_THRESHOLD:
-        signal = 'Long'
-        consensus_ratio = long_count / total_signals
-    elif short_count / total_signals >= SIGNAL_THRESHOLD:
-        signal = 'Short'
-        consensus_ratio = short_count / total_signals
-
+    # === 16. TRẢ VỀ KẾT QUẢ TỐI ƯU ===
     return {
-        'timeframe': timeframe,
-        'signal': signal,
-        'consensus_ratio': consensus_ratio,
-        'rsi_signal': rsi_signal,
-        'stoch_signal': stoch_signal,
-        'macd_signal': macd_signal,
-        'cci_signal': cci_signal,
-        'roc_signal': roc_signal,
-        'ma_signal': ma_signal,
-        'adx_signal': adx_signal,
-        'adx_value': adx[-1],
-        'sar_signal': sar_signal,
-        'ichimoku_signal': ichimoku_signal,
-        'bb_signal': bb_signal,
-        'obv_signal': obv_signal,
-        'mfi_signal': mfi_signal,
-        'volume_profile_signal': volume_profile_signal,
-        'vwap_signal': vwap_signal,
-        'atr_signal': atr_signal,
-        'pivot_signal': pivot_signal,
-        'wyckoff_signal': wyckoff_signal,
-        'price_pattern_signal': price_pattern_signal,
-        'candlestick_signal': candlestick_signal,
-        'elliott_wave_signal': elliott_wave_signal,
-        # Thêm các chỉ báo leading mới
-        'williams_signal': williams_signal,
-        'ult_osc_signal': ult_osc_signal,
-        'cci_short_signal': cci_short_signal,
-        'momentum_signal': momentum_signal,
-        'rsi_value': rsi[-1],
-        'mfi_value': mfi[-1],
-        'current_price': current_price,
+        'trend': 'bullish' if consensus == 'Long' else 'bearish' if consensus == 'Short' else 'neutral',
+        'signal': consensus,
+        'confidence': confidence,
+        'consensus_ratio': confidence,  # Thêm consensus_ratio để tương thích
+        'strength': divergence_strength,
+        'indicators': {
+            'rsi': get_last(rsi),
+            'stoch_k': get_last(stoch_k),
+            'stoch_d': get_last(stoch_d),
+            'macd_line': get_last(macd_line),
+            'macd_signal': get_last(macd_signal),
+            'ema20': get_last(ema20),
+            'ema50': get_last(ema50),
+            'adx': get_last(adx),
+            'bb_upper': get_last(bb_upper),
+            'bb_middle': get_last(bb_middle),
+            'bb_lower': get_last(bb_lower),
+            'atr': get_last(atr),
+            'obv': get_last(obv),
+            'vwap': vwap,
+            'support': support,
+            'resistance': resistance
+        },
+        'signals': {
+            'rsi': rsi_signal,
+            'stoch': stoch_signal,
+            'macd': macd_signal,
+            'ma': ma_signal,
+            'adx': adx_signal,
+            'bb': bb_signal,
+            'obv': obv_signal,
+            'vwap': vwap_signal,
+            'atr': atr_signal,
+            'pivot': pivot_signal,
+            'candlestick': candlestick_signal,
+            'pattern': price_pattern_signal
+        },
+        'divergences': divergences,
+        'divergence_consensus': divergence_consensus,
+        'entry_points': entry_points,
         'price_pattern': price_pattern,
         'candlestick_patterns': candlestick_patterns,
-        'candlestick_analysis': candlestick_analysis,
-        'elliott_wave': elliott_wave,
-        'entry_points': entry_points,
         'smc_signals': smc_signals,
-        'pa_signals': pa_signals,
-        'order_blocks': order_blocks,
-        'fvgs': fvgs,
-        'liquidity_zones': liquidity_zones,
-        'mitigation_zones': mitigation_zones,
-        'price_action_patterns': price_action_patterns,
-        'commodity_signals': commodity_signals if symbol in ['XAU/USD', 'WTI/USD'] else {}
+        'commodity_signals': commodity_signals,
+        'signal_counts': {
+            'long': long_count,
+            'short': short_count,
+            'hold': hold_count,
+            'total': total_signals
+        }
     }
 
 def make_decision(analyses):
@@ -1699,6 +1489,10 @@ def format_coin_report(result):
             timeframe = analysis['timeframe']
             strong_signals = []
             
+            # Divergence mạnh - Ưu tiên cao nhất
+            if analysis['divergence_consensus']['signal'] != 'Hold' and analysis['divergence_consensus']['strength'] > 0.3:
+                strong_signals.append(f"Divergence ({analysis['divergence_consensus']['count']} signals)")
+            
             # RSI cực mạnh (15/85)
             if analysis['rsi_value'] < 15 or analysis['rsi_value'] > 85:
                 strong_signals.append(f"RSI({analysis['rsi_value']:.1f})")
@@ -1763,7 +1557,7 @@ def format_coin_report(result):
     return report
 
 def format_analysis_report(results):
-    """Định dạng báo cáo phân tích cho Telegram (giữ lại cho tương thích)"""
+    """Định dạng báo cáo phân tích tối ưu với nhấn mạnh divergence/convergence"""
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Lấy thống kê độ chính xác
@@ -1774,10 +1568,11 @@ def format_analysis_report(results):
         if overall.get('total_predictions', 0) > 0:
             accuracy_summary = f" | 📈 Độ chính xác: {overall['accuracy']:.1%} ({overall['accurate_predictions']}/{overall['total_predictions']})"
     
-    report = f"🤖 <b>BÁO CÁO PHÂN TÍCH XU HƯỚNG</b>\n"
+    report = f"🤖 <b>BÁO CÁO PHÂN TÍCH XU HƯỚNG TỐI ƯU</b>\n"
     report += f"⏰ Thời gian: {current_time}\n"
     report += f"📊 Ngưỡng tối thiểu: {SIGNAL_THRESHOLD:.1%}{accuracy_summary}\n"
-    report += f"💰 Tài sản: Crypto, Vàng, Dầu\n\n"
+    report += f"💰 Tài sản: Crypto, Vàng, Dầu\n"
+    report += f"🎯 <b>12 CHỈ SỐ CỐT LÕI + DIVERGENCE ƯU TIÊN CAO</b>\n\n"
     
     if not results:
         report += "📊 Không có xu hướng mạnh nào được phát hiện."
@@ -1792,55 +1587,100 @@ def format_analysis_report(results):
         if decision == 'Mixed':
             report += f"⚠️ <b>{symbol}: CÓ KẾT LUẬN TRÁI CHIỀU</b>\n"
             for analysis in valid_timeframes:
-                report += f"  • {analysis['timeframe']}: {analysis['signal']} ({analysis['consensus_ratio']:.1%})\n"
+                report += f"  • {analysis['timeframe']}: {analysis['signal']} ({analysis['confidence']:.1%})\n"
         elif decision in ['Long', 'Short']:
             emoji = "✅" if decision == 'Long' else "🔴"
-            report += f"{emoji} <b>{symbol}: {decision}</b> (Đồng thuận: {consensus_ratio:.1%})\n"
+            report += f"{emoji} <b>{symbol}: {decision}</b> (Độ tin cậy: {consensus_ratio:.1%})\n"
             report += f"📊 Timeframes: {', '.join([a['timeframe'] for a in valid_timeframes])}\n"
             
             # Thêm thông tin chi tiết cho từng timeframe
             for analysis in valid_timeframes:
                 timeframe = analysis['timeframe']
-                report += f"📊 <b>Timeframe {timeframe}:</b>\n"
-                report += f"📈 RSI: {analysis['rsi_signal']} ({analysis['rsi_value']:.1f}) -> {timeframe}\n"
-                report += f"📊 MA: {analysis['ma_signal']} | ADX: {analysis['adx_signal']} -> {timeframe}\n"
-                report += f"🎯 Ichimoku: {analysis['ichimoku_signal']} | SAR: {analysis['sar_signal']} -> {timeframe}\n"
-                report += f"📉 BB: {analysis['bb_signal']} | OBV: {analysis['obv_signal']} -> {timeframe}\n"
-                report += f"💰 MFI: {analysis['mfi_signal']} ({analysis['mfi_value']:.1f}) -> {timeframe}\n"
+                report += f"\n📊 <b>Timeframe {timeframe}:</b>\n"
                 
-                if analysis['price_pattern'] != 'None':
-                    report += f"📊 Mô hình giá: {analysis['price_pattern']} -> {timeframe}\n"
-                if analysis['candlestick_patterns']:
-                    report += f"🕯️ Mô hình nến: {', '.join(analysis['candlestick_patterns'])} -> {timeframe}\n"
-                if analysis['candlestick_analysis']['conclusion'] != "⚪ KHÔNG CÓ MÔ HÌNH NẾN RÕ RÀNG":
-                    report += f"📊 Phân tích mô hình nến: {analysis['candlestick_analysis']['conclusion']} -> {timeframe}\n"
-                    report += f"📝 Chi tiết: {', '.join(analysis['candlestick_analysis']['analysis'])} -> {timeframe}\n"
+                # === 1. DIVERGENCE/CONVERGENCE - ƯU TIÊN CAO NHẤT ===
+                divergence_consensus = analysis.get('divergence_consensus', {})
+                if divergence_consensus.get('signal') != 'Hold' and divergence_consensus.get('strength', 0) > 0.2:
+                    strength_emoji = "🔥" if divergence_consensus['strength'] > 0.5 else "⚡"
+                    report += f"{strength_emoji} <b>DIVERGENCE/CONVERGENCE MẠNH:</b>\n"
+                    report += f"  • Tín hiệu: {divergence_consensus['signal']}\n"
+                    report += f"  • Độ mạnh: {divergence_consensus['strength']:.2f}\n"
+                    report += f"  • Số lượng: {divergence_consensus['count']}\n"
+                    
+                    # Hiển thị chi tiết divergence
+                    divergences = analysis.get('divergences', {})
+                    for div_type, div_info in divergences.items():
+                        if div_info.get('type') != 'None':
+                            report += f"  • {div_type}: {div_info['type']} ({div_info['strength']:.2f})\n"
+                    report += "\n"
                 
-                # Thêm thông tin chi tiết về các pattern khác
-                if analysis['wyckoff_signal'] != 'Hold':
-                    report += f"📈 Wyckoff: {analysis['wyckoff_signal']} -> {timeframe}\n"
-                if analysis['pivot_signal'] != 'Hold':
-                    report += f"🎯 Pivot: {analysis['pivot_signal']} -> {timeframe}\n"
-                if analysis['elliott_wave'] != 'None':
-                    report += f"🌊 Elliott Wave: {analysis['elliott_wave']} ({analysis['elliott_wave_signal']}) -> {timeframe}\n"
+                # === 2. CHỈ SỐ CỐT LÕI ===
+                signals = analysis.get('signals', {})
+                indicators = analysis.get('indicators', {})
                 
-                # Chỉ báo hàng hóa (cho vàng và dầu)
-                if 'commodity_signals' in analysis and analysis['commodity_signals']:
-                    commodity = analysis['commodity_signals']
-                    if commodity.get('aroon_signal') != 'Hold':
-                        report += f"📈 Aroon: {commodity['aroon_signal']} -> {timeframe}\n"
-                    if commodity.get('csi_signal') != 'Hold':
-                        report += f"📊 CSI: {commodity['csi_signal']} -> {timeframe}\n"
-                    if commodity.get('seasonal_signal') != 'Hold':
-                        report += f"📅 Seasonal: {commodity['seasonal_signal']} -> {timeframe}\n"
+                # Trend Indicators
+                report += f"📈 <b>TREND:</b>\n"
+                report += f"  • MA: {signals.get('ma', 'Hold')} (EMA20: {indicators.get('ema20', 0):.4f})\n"
+                report += f"  • ADX: {signals.get('adx', 'Hold')} ({indicators.get('adx', 0):.1f})\n"
                 
-                # Debug: Hiển thị tất cả các tín hiệu để kiểm tra
-                report += f"🔍 Debug - Tất cả tín hiệu: RSI({analysis['rsi_signal']}), Stoch({analysis['stoch_signal']}), MACD({analysis['macd_signal']}), CCI({analysis['cci_signal']}), ROC({analysis['roc_signal']}), MA({analysis['ma_signal']}), ADX({analysis['adx_signal']}), SAR({analysis['sar_signal']}), Ichimoku({analysis['ichimoku_signal']}), BB({analysis['bb_signal']}), OBV({analysis['obv_signal']}), MFI({analysis['mfi_signal']}), VP({analysis['volume_profile_signal']}), VWAP({analysis['vwap_signal']}), ATR({analysis['atr_signal']}), Pivot({analysis['pivot_signal']}), Wyckoff({analysis['wyckoff_signal']}), Price({analysis['price_pattern_signal']}), Candle({analysis['candlestick_signal']}), Elliott({analysis['elliott_wave_signal']}) -> {timeframe}\n"
+                # Momentum Indicators
+                report += f"📊 <b>MOMENTUM:</b>\n"
+                report += f"  • RSI: {signals.get('rsi', 'Hold')} ({indicators.get('rsi', 0):.1f})\n"
+                report += f"  • Stochastic: {signals.get('stoch', 'Hold')} (K: {indicators.get('stoch_k', 0):.1f})\n"
+                report += f"  • MACD: {signals.get('macd', 'Hold')} ({indicators.get('macd_line', 0):.4f})\n"
                 
-                # Thêm thông tin điểm entry
+                # Volatility Indicators
+                report += f"📉 <b>VOLATILITY:</b>\n"
+                report += f"  • Bollinger Bands: {signals.get('bb', 'Hold')}\n"
+                report += f"  • ATR: {signals.get('atr', 'Hold')} ({indicators.get('atr', 0):.4f})\n"
+                
+                # Volume Indicators
+                report += f"💰 <b>VOLUME:</b>\n"
+                report += f"  • OBV: {signals.get('obv', 'Hold')}\n"
+                report += f"  • VWAP: {signals.get('vwap', 'Hold')} ({indicators.get('vwap', 0):.4f})\n"
+                
+                # Support/Resistance
+                report += f"🎯 <b>SUPPORT/RESISTANCE:</b>\n"
+                report += f"  • Pivot: {signals.get('pivot', 'Hold')}\n"
+                report += f"  • Support: {indicators.get('support', 0):.4f}\n"
+                report += f"  • Resistance: {indicators.get('resistance', 0):.4f}\n"
+                
+                # Patterns
+                if analysis.get('price_pattern') != 'None':
+                    report += f"📊 <b>MÔ HÌNH GIÁ:</b> {analysis['price_pattern']}\n"
+                
+                if analysis.get('candlestick_patterns'):
+                    report += f"🕯️ <b>MÔ HÌNH NẾN:</b> {', '.join(analysis['candlestick_patterns'])}\n"
+                
+                # Smart Money Concepts
+                smc_signals = analysis.get('smc_signals', {})
+                if any(signal != 'Hold' for signal in smc_signals.values()):
+                    report += f"🧠 <b>SMART MONEY CONCEPTS:</b>\n"
+                    for smc_type, smc_signal in smc_signals.items():
+                        if smc_signal != 'Hold':
+                            report += f"  • {smc_type}: {smc_signal}\n"
+                
+                # Commodity Signals (cho vàng và dầu)
+                commodity_signals = analysis.get('commodity_signals', {})
+                if commodity_signals:
+                    report += f"🏆 <b>CHỈ SỐ HÀNG HÓA:</b>\n"
+                    for comm_type, comm_signal in commodity_signals.items():
+                        if comm_signal != 'Hold':
+                            report += f"  • {comm_type}: {comm_signal}\n"
+                
+                # Signal Counts
+                signal_counts = analysis.get('signal_counts', {})
+                if signal_counts:
+                    report += f"📊 <b>THỐNG KÊ TÍN HIỆU:</b>\n"
+                    report += f"  • Long: {signal_counts.get('long', 0)}\n"
+                    report += f"  • Short: {signal_counts.get('short', 0)}\n"
+                    report += f"  • Hold: {signal_counts.get('hold', 0)}\n"
+                    report += f"  • Tổng: {signal_counts.get('total', 0)}\n"
+                
+                # Entry Points
                 if 'entry_points' in analysis:
                     entry = analysis['entry_points']
-                    report += f"🎯 <b>ĐIỂM ENTRY HỢP LÝ ({timeframe}):</b>\n"
+                    report += f"\n🎯 <b>ĐIỂM ENTRY HỢP LÝ:</b>\n"
                     report += f"  • Entry bảo thủ: ${entry['conservative']:.4f}\n"
                     report += f"  • Entry tích cực: ${entry['aggressive']:.4f}\n"
                     report += f"  • Stop Loss: ${entry['stop_loss']:.4f}\n"
@@ -1968,9 +1808,13 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         'analysis': []
     }
     
+    # Helper function để lấy giá trị cuối cùng
+    def get_last(series):
+        return series.iloc[-1] if hasattr(series, 'iloc') else series[-1]
+    
     # 1. Phân tích xu hướng hiện tại
     trend = 'neutral'
-    if current_price > ema50[-1]:
+    if current_price > get_last(ema50):
         trend = 'bullish'
     else:
         trend = 'bearish'
@@ -1978,7 +1822,7 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
     # 2. Tính các mức entry cho Long
     if trend == 'bullish':
         # Entry bảo thủ (Conservative) - Chờ pullback về hỗ trợ
-        conservative_entry = min(support, bb_lower[-1], pivot_points['s1'])
+        conservative_entry = min(support, get_last(bb_lower), pivot_points['s1'])
         entry_points['conservative'] = conservative_entry
         
         # Entry tích cực (Aggressive) - Vào ngay khi có tín hiệu
@@ -1987,7 +1831,7 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         
         # Stop Loss - Dựa trên mức hỗ trợ mạnh (s2) để tạo R/R tốt hơn
         # Sử dụng s2 thay vì s1 để SL gần entry hơn
-        stop_loss = min(support * 0.998, bb_lower[-1] * 0.999, pivot_points['s2'] * 0.999)
+        stop_loss = min(support * 0.998, get_last(bb_lower) * 0.999, pivot_points['s2'] * 0.999)
         entry_points['stop_loss'] = stop_loss
         
         # Take Profit - Tỷ lệ với khoảng cách SL để tạo R/R ít nhất 1:2
@@ -2010,7 +1854,7 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
     # 3. Tính các mức entry cho Short
     elif trend == 'bearish':
         # Entry bảo thủ - Chờ bounce về kháng cự
-        conservative_entry = max(resistance, bb_upper[-1], pivot_points['r1'])
+        conservative_entry = max(resistance, get_last(bb_upper), pivot_points['r1'])
         entry_points['conservative'] = conservative_entry
         
         # Entry tích cực - Vào ngay khi có tín hiệu
@@ -2019,7 +1863,7 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         
         # Stop Loss - Dựa trên mức kháng cự mạnh (r2) để tạo R/R tốt hơn
         # Sử dụng r2 thay vì r1 để SL gần entry hơn
-        stop_loss = max(resistance * 1.002, bb_upper[-1] * 1.001, pivot_points['r2'] * 1.001)
+        stop_loss = max(resistance * 1.002, get_last(bb_upper) * 1.001, pivot_points['r2'] * 1.001)
         entry_points['stop_loss'] = stop_loss
         
         # Take Profit - Tỷ lệ với khoảng cách SL để tạo R/R ít nhất 1:2
@@ -2040,17 +1884,17 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         entry_points['analysis'].append(f"  • Take Profit: ${take_profit:.4f}")
     
     # 4. Phân tích RSI để tối ưu entry
-    if rsi[-1] < 15:  # Từ 20 -> 15
-        entry_points['analysis'].append(f"  • RSI quá bán ({rsi[-1]:.1f}) → Ưu tiên entry bảo thủ")
-    elif rsi[-1] > 85:  # Từ 80 -> 85
-        entry_points['analysis'].append(f"  • RSI quá mua ({rsi[-1]:.1f}) → Ưu tiên entry bảo thủ")
+    if get_last(rsi) < 15:  # Từ 20 -> 15
+        entry_points['analysis'].append(f"  • RSI quá bán ({get_last(rsi):.1f}) → Ưu tiên entry bảo thủ")
+    elif get_last(rsi) > 85:  # Từ 80 -> 85
+        entry_points['analysis'].append(f"  • RSI quá mua ({get_last(rsi):.1f}) → Ưu tiên entry bảo thủ")
     else:
-        entry_points['analysis'].append(f"  • RSI trung tính ({rsi[-1]:.1f}) → Có thể entry tích cực")
+        entry_points['analysis'].append(f"  • RSI trung tính ({get_last(rsi):.1f}) → Có thể entry tích cực")
     
     # 5. Phân tích Bollinger Bands
-    if current_price < bb_lower[-1]:
+    if current_price < get_last(bb_lower):
         entry_points['analysis'].append(f"  • Giá dưới BB Lower → Cơ hội entry tốt cho Long")
-    elif current_price > bb_upper[-1]:
+    elif current_price > get_last(bb_upper):
         entry_points['analysis'].append(f"  • Giá trên BB Upper → Cơ hội entry tốt cho Short")
     else:
         entry_points['analysis'].append(f"  • Giá trong BB → Entry ở giữa range")
@@ -2395,6 +2239,293 @@ def analyze_price_action_signals(current_price, price_action_patterns, highs, lo
     
     return pa_signals
 
+def detect_divergence(price_data, indicator_data, lookback=14):
+    """
+    Phát hiện divergence giữa giá và chỉ báo
+    Returns: {'type': 'bullish/bearish/hidden_bullish/hidden_bearish', 'strength': 0-1}
+    """
+    if len(price_data) < lookback * 2:
+        return None
+    
+    # Chuyển đổi sang pandas Series nếu cần
+    if not isinstance(price_data, pd.Series):
+        price_data = pd.Series(price_data)
+    if not isinstance(indicator_data, pd.Series):
+        indicator_data = pd.Series(indicator_data)
+    
+    # Tìm các đỉnh và đáy trong giá
+    price_peaks = []
+    price_troughs = []
+    
+    for i in range(1, len(price_data) - 1):
+        if price_data.iloc[i] > price_data.iloc[i-1] and price_data.iloc[i] > price_data.iloc[i+1]:
+            price_peaks.append((i, price_data.iloc[i]))
+        elif price_data.iloc[i] < price_data.iloc[i-1] and price_data.iloc[i] < price_data.iloc[i+1]:
+            price_troughs.append((i, price_data.iloc[i]))
+    
+    # Tìm các đỉnh và đáy trong chỉ báo
+    indicator_peaks = []
+    indicator_troughs = []
+    
+    for i in range(1, len(indicator_data) - 1):
+        if indicator_data.iloc[i] > indicator_data.iloc[i-1] and indicator_data.iloc[i] > indicator_data.iloc[i+1]:
+            indicator_peaks.append((i, indicator_data.iloc[i]))
+        elif indicator_data.iloc[i] < indicator_data.iloc[i-1] and indicator_data.iloc[i] < indicator_data.iloc[i+1]:
+            indicator_troughs.append((i, indicator_data.iloc[i]))
+    
+    # Phân tích divergence
+    divergence_result = None
+    
+    # Regular Bullish Divergence: Giá tạo đáy thấp hơn, chỉ báo tạo đáy cao hơn
+    if len(price_troughs) >= 2 and len(indicator_troughs) >= 2:
+        recent_price_trough = price_troughs[-1]
+        prev_price_trough = price_troughs[-2]
+        recent_indicator_trough = indicator_troughs[-1]
+        prev_indicator_trough = indicator_troughs[-2]
+        
+        if (recent_price_trough[1] < prev_price_trough[1] and 
+            recent_indicator_trough[1] > prev_indicator_trough[1] and
+            recent_price_trough[0] > prev_price_trough[0] and
+            recent_indicator_trough[0] > prev_indicator_trough[0]):
+            
+            strength = min(1.0, abs(recent_price_trough[1] - prev_price_trough[1]) / prev_price_trough[1])
+            divergence_result = {'type': 'bullish', 'strength': strength}
+    
+    # Regular Bearish Divergence: Giá tạo đỉnh cao hơn, chỉ báo tạo đỉnh thấp hơn
+    elif len(price_peaks) >= 2 and len(indicator_peaks) >= 2:
+        recent_price_peak = price_peaks[-1]
+        prev_price_peak = price_peaks[-2]
+        recent_indicator_peak = indicator_peaks[-1]
+        prev_indicator_peak = indicator_peaks[-2]
+        
+        if (recent_price_peak[1] > prev_price_peak[1] and 
+            recent_indicator_peak[1] < prev_indicator_peak[1] and
+            recent_price_peak[0] > prev_price_peak[0] and
+            recent_indicator_peak[0] > prev_indicator_peak[0]):
+            
+            strength = min(1.0, abs(recent_price_peak[1] - prev_price_peak[1]) / prev_price_peak[1])
+            divergence_result = {'type': 'bearish', 'strength': strength}
+    
+    # Hidden Bullish Divergence: Giá tạo đáy cao hơn, chỉ báo tạo đáy thấp hơn
+    elif len(price_troughs) >= 2 and len(indicator_troughs) >= 2:
+        recent_price_trough = price_troughs[-1]
+        prev_price_trough = price_troughs[-2]
+        recent_indicator_trough = indicator_troughs[-1]
+        prev_indicator_trough = indicator_troughs[-2]
+        
+        if (recent_price_trough[1] > prev_price_trough[1] and 
+            recent_indicator_trough[1] < prev_indicator_trough[1] and
+            recent_price_trough[0] > prev_price_trough[0] and
+            recent_indicator_trough[0] > prev_indicator_trough[0]):
+            
+            strength = min(1.0, abs(recent_price_trough[1] - prev_price_trough[1]) / prev_price_trough[1])
+            divergence_result = {'type': 'hidden_bullish', 'strength': strength}
+    
+    # Hidden Bearish Divergence: Giá tạo đỉnh thấp hơn, chỉ báo tạo đỉnh cao hơn
+    elif len(price_peaks) >= 2 and len(indicator_peaks) >= 2:
+        recent_price_peak = price_peaks[-1]
+        prev_price_peak = price_peaks[-2]
+        recent_indicator_peak = indicator_peaks[-1]
+        prev_indicator_peak = indicator_peaks[-2]
+        
+        if (recent_price_peak[1] < prev_price_peak[1] and 
+            recent_indicator_peak[1] > prev_indicator_peak[1] and
+            recent_price_peak[0] > prev_price_peak[0] and
+            recent_indicator_peak[0] > prev_indicator_peak[0]):
+            
+            strength = min(1.0, abs(recent_price_peak[1] - prev_price_peak[1]) / prev_price_peak[1])
+            divergence_result = {'type': 'hidden_bearish', 'strength': strength}
+    
+    return divergence_result
+
+def analyze_rsi_divergence(close_prices, rsi_values):
+    """Phân tích RSI divergence"""
+    if len(close_prices) < 20 or len(rsi_values) < 20:
+        return None
+    
+    # Lọc dữ liệu không null
+    valid_indices = []
+    for i in range(len(close_prices)):
+        if not np.isnan(close_prices[i]) and not np.isnan(rsi_values[i]):
+            valid_indices.append(i)
+    
+    if len(valid_indices) < 20:
+        return None
+    
+    close_clean = [close_prices[i] for i in valid_indices]
+    rsi_clean = [rsi_values[i] for i in valid_indices]
+    
+    divergence = detect_divergence(close_clean, rsi_clean, lookback=14)
+    
+    if divergence:
+        # Thêm thông tin chi tiết
+        divergence['indicator'] = 'RSI'
+        divergence['description'] = get_divergence_description(divergence['type'], 'RSI')
+        divergence['signal'] = get_divergence_signal(divergence['type'])
+    
+    return divergence
+
+def analyze_macd_divergence(close_prices, macd_values):
+    """Phân tích MACD divergence"""
+    if len(close_prices) < 20 or len(macd_values) < 20:
+        return None
+    
+    # Lọc dữ liệu không null
+    valid_indices = []
+    for i in range(len(close_prices)):
+        if not np.isnan(close_prices[i]) and not np.isnan(macd_values[i]):
+            valid_indices.append(i)
+    
+    if len(valid_indices) < 20:
+        return None
+    
+    close_clean = [close_prices[i] for i in valid_indices]
+    macd_clean = [macd_values[i] for i in valid_indices]
+    
+    divergence = detect_divergence(close_clean, macd_clean, lookback=14)
+    
+    if divergence:
+        # Thêm thông tin chi tiết
+        divergence['indicator'] = 'MACD'
+        divergence['description'] = get_divergence_description(divergence['type'], 'MACD')
+        divergence['signal'] = get_divergence_signal(divergence['type'])
+    
+    return divergence
+
+def analyze_price_volume_divergence(close_prices, volume_data):
+    """Phân tích divergence giữa giá và khối lượng"""
+    if len(close_prices) < 20 or len(volume_data) < 20:
+        return None
+    
+    # Tính toán volume moving average để so sánh
+    volume_ma = ta.trend.sma_indicator(volume_data, window=10)
+    
+    # Lọc dữ liệu không null
+    valid_indices = []
+    for i in range(len(close_prices)):
+        if not np.isnan(close_prices[i]) and not np.isnan(volume_ma[i]):
+            valid_indices.append(i)
+    
+    if len(valid_indices) < 20:
+        return None
+    
+    close_clean = [close_prices[i] for i in valid_indices]
+    volume_ma_clean = [volume_ma[i] for i in valid_indices]
+    
+    divergence = detect_divergence(close_clean, volume_ma_clean, lookback=14)
+    
+    if divergence:
+        # Thêm thông tin chi tiết
+        divergence['indicator'] = 'Volume'
+        divergence['description'] = get_divergence_description(divergence['type'], 'Volume')
+        divergence['signal'] = get_divergence_signal(divergence['type'])
+    
+    return divergence
+
+def get_divergence_description(divergence_type, indicator):
+    """Tạo mô tả chi tiết cho divergence"""
+    descriptions = {
+        'bullish': {
+            'RSI': 'RSI tạo đáy cao hơn trong khi giá tạo đáy thấp hơn → Tín hiệu đảo chiều tăng mạnh',
+            'MACD': 'MACD tạo đáy cao hơn trong khi giá tạo đáy thấp hơn → Tín hiệu đảo chiều tăng mạnh',
+            'Volume': 'Khối lượng tăng trong khi giá giảm → Tín hiệu tích lũy, sẵn sàng đảo chiều tăng'
+        },
+        'bearish': {
+            'RSI': 'RSI tạo đỉnh thấp hơn trong khi giá tạo đỉnh cao hơn → Tín hiệu đảo chiều giảm mạnh',
+            'MACD': 'MACD tạo đỉnh thấp hơn trong khi giá tạo đỉnh cao hơn → Tín hiệu đảo chiều giảm mạnh',
+            'Volume': 'Khối lượng giảm trong khi giá tăng → Tín hiệu phân phối, sẵn sàng đảo chiều giảm'
+        },
+        'hidden_bullish': {
+            'RSI': 'RSI tạo đáy thấp hơn trong khi giá tạo đáy cao hơn → Xu hướng tăng tiếp diễn',
+            'MACD': 'MACD tạo đáy thấp hơn trong khi giá tạo đáy cao hơn → Xu hướng tăng tiếp diễn',
+            'Volume': 'Khối lượng giảm trong khi giá tăng → Xu hướng tăng tiếp diễn'
+        },
+        'hidden_bearish': {
+            'RSI': 'RSI tạo đỉnh cao hơn trong khi giá tạo đỉnh thấp hơn → Xu hướng giảm tiếp diễn',
+            'MACD': 'MACD tạo đỉnh cao hơn trong khi giá tạo đỉnh thấp hơn → Xu hướng giảm tiếp diễn',
+            'Volume': 'Khối lượng tăng trong khi giá giảm → Xu hướng giảm tiếp diễn'
+        }
+    }
+    
+    return descriptions.get(divergence_type, {}).get(indicator, f'{divergence_type} divergence detected')
+
+def get_divergence_signal(divergence_type):
+    """Chuyển đổi loại divergence thành tín hiệu giao dịch"""
+    signal_map = {
+        'bullish': 'Long',
+        'hidden_bullish': 'Long',
+        'bearish': 'Short',
+        'hidden_bearish': 'Short'
+    }
+    return signal_map.get(divergence_type, 'Hold')
+
+def analyze_all_divergences(close_prices, rsi_values, macd_values, volume_data):
+    """Phân tích tất cả các loại divergence"""
+    divergences = []
+    
+    # RSI Divergence
+    rsi_div = analyze_rsi_divergence(close_prices, rsi_values)
+    if rsi_div:
+        divergences.append(rsi_div)
+    
+    # MACD Divergence
+    macd_div = analyze_macd_divergence(close_prices, macd_values)
+    if macd_div:
+        divergences.append(macd_div)
+    
+    # Price-Volume Divergence
+    volume_div = analyze_price_volume_divergence(close_prices, volume_data)
+    if volume_div:
+        divergences.append(volume_div)
+    
+    return divergences
+
+def calculate_divergence_consensus(divergences):
+    """Tính toán consensus từ các divergence"""
+    if not divergences:
+        return {'signal': 'Hold', 'strength': 0, 'count': 0}
+    
+    long_signals = [d for d in divergences if d['signal'] == 'Long']
+    short_signals = [d for d in divergences if d['signal'] == 'Short']
+    
+    if len(long_signals) > len(short_signals):
+        avg_strength = sum(d['strength'] for d in long_signals) / len(long_signals)
+        return {
+            'signal': 'Long',
+            'strength': avg_strength,
+            'count': len(long_signals),
+            'divergences': long_signals
+        }
+    elif len(short_signals) > len(long_signals):
+        avg_strength = sum(d['strength'] for d in short_signals) / len(short_signals)
+        return {
+            'signal': 'Short',
+            'strength': avg_strength,
+            'count': len(short_signals),
+            'divergences': short_signals
+        }
+    else:
+        # Nếu số lượng bằng nhau, chọn theo strength cao hơn
+        max_long_strength = max([d['strength'] for d in long_signals]) if long_signals else 0
+        max_short_strength = max([d['strength'] for d in short_signals]) if short_signals else 0
+        
+        if max_long_strength > max_short_strength:
+            return {
+                'signal': 'Long',
+                'strength': max_long_strength,
+                'count': len(long_signals),
+                'divergences': long_signals
+            }
+        elif max_short_strength > max_long_strength:
+            return {
+                'signal': 'Short',
+                'strength': max_short_strength,
+                'count': len(short_signals),
+                'divergences': short_signals
+            }
+        else:
+            return {'signal': 'Hold', 'strength': 0, 'count': 0}
+
 def main():
     logger.info("Bắt đầu phân tích xu hướng ngắn hạn trên Binance Spot...")
     
@@ -2406,7 +2537,7 @@ def main():
     
     symbols = get_usdt_symbols()
     logger.info(f"Đã chọn {len(symbols)} tài sản: {symbols}")
-    logger.info("📊 Bao gồm: Crypto (BTC, ETH, BNB) từ Binance, Vàng & Dầu từ TradingView/Investing.com")
+    logger.info("📊 Bao gồm: Crypto (BTC, ETH, BNB) từ Binance")
 
     # Phân tích lần đầu (chỉ để kiểm tra kết nối)
     results = []

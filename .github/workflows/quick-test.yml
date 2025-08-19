@@ -1,0 +1,35 @@
+name: Quick Trading Test
+
+on:
+  workflow_dispatch:  # Chỉ chạy thủ công
+
+jobs:
+  quick-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # Chỉ 10 phút
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install ccxt pandas numpy requests python-dotenv ta
+        
+    - name: Create .env file
+      run: |
+        echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
+        echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+        
+    - name: Run quick test
+      run: |
+        python script_quick_test.py
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

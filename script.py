@@ -14,6 +14,27 @@ import logging
 from dotenv import load_dotenv
 import ta  # Thay thế TA-Lib với thư viện ta
 
+# Machine Learning imports
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.feature_selection import SelectKBest, f_classif
+import xgboost as xgb
+import lightgbm as lgb
+from tensorflow import keras
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Conv1D, MaxPooling1D
+from tensorflow.keras.optimizers import Adam
+import joblib
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+
 # Load environment variables
 load_dotenv()
 
@@ -59,7 +80,7 @@ EXNESS_SYMBOLS = {
 
 # Cấu hình
 # Chỉ phân tích crypto; tạm thời bỏ vàng và dầu do nguồn dữ liệu không ổn định
-SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT']
+SYMBOLS = ['BTC/USDT', 'ETH/USDT']  # Bỏ BNB theo yêu cầu của user
 TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
 CANDLE_LIMIT = 200
 SIGNAL_THRESHOLD = 0.6 # Giảm xuống 40% để dễ có tín hiệu hơn
@@ -77,6 +98,22 @@ PREDICTION_ACCURACY_FILE = "prediction_accuracy.json"
 PREDICTION_UPDATE_INTERVAL = 3600  # Cập nhật kết quả thực tế mỗi giờ
 PREDICTION_RETENTION_DAYS = 30  # Giữ dữ liệu dự đoán trong 30 ngày
 
+# Cấu hình Machine Learning
+ML_MODELS_DIR = "ml_models"
+ML_DATA_DIR = "ml_data"
+ML_FEATURES_FILE = "ml_features.json"
+ML_PERFORMANCE_FILE = "ml_performance.json"
+ML_UPDATE_INTERVAL = 86400  # Cập nhật mô hình ML mỗi 24 giờ
+ML_MIN_SAMPLES = 500  # Giảm xuống 500 để dễ train hơn
+ML_CONFIDENCE_THRESHOLD = 0.7  # Ngưỡng tin cậy tối thiểu cho dự đoán ML
+ML_HISTORICAL_CANDLES = 5000  # Số lượng candles lịch sử để train ML
+
+# Cấu hình phân tích hội tụ (Convergence Analysis)
+CONVERGENCE_ANALYSIS_ENABLED = True
+CONVERGENCE_LOOKBACK_PERIODS = [5, 10, 20, 50]  # Các khoảng thời gian để phân tích hội tụ
+CONVERGENCE_THRESHOLD = 0.8  # Ngưỡng hội tụ (0-1)
+CONVERGENCE_WEIGHT = 0.3  # Trọng số cho tín hiệu hội tụ trong consensus
+
 def get_usdt_symbols():
     """Trả về danh sách cặp giao dịch cố định bao gồm crypto, vàng và dầu"""
     return SYMBOLS
@@ -84,6 +121,428 @@ def get_usdt_symbols():
 def ensure_prediction_data_dir():
     """Đảm bảo thư mục dữ liệu dự đoán tồn tại"""
     Path(PREDICTION_DATA_DIR).mkdir(exist_ok=True)
+
+def ensure_ml_directories():
+    """Đảm bảo các thư mục ML tồn tại"""
+    Path(ML_MODELS_DIR).mkdir(exist_ok=True)
+    Path(ML_DATA_DIR).mkdir(exist_ok=True)
+
+def create_ml_features(data, symbol, timeframe):
+    """Tạo features cho Machine Learning từ dữ liệu OHLCV"""
+    try:
+        df = pd.DataFrame({
+            'open': data['open'],
+            'high': data['high'],
+            'low': data['low'],
+            'close': data['close'],
+            'volume': data['volume']
+        })
+        
+        # Technical Indicators
+        df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+        df['macd'] = ta.trend.macd(df['close'])
+        df['macd_signal'] = ta.trend.macd_signal(df['close'])
+        df['bb_upper'] = ta.volatility.bollinger_hband(df['close'])
+        df['bb_lower'] = ta.volatility.bollinger_lband(df['close'])
+        df['bb_middle'] = ta.volatility.bollinger_mavg(df['close'])
+        df['ema_20'] = ta.trend.ema_indicator(df['close'], window=20)
+        df['ema_50'] = ta.trend.ema_indicator(df['close'], window=50)
+        df['sma_20'] = ta.trend.sma_indicator(df['close'], window=20)
+        df['sma_50'] = ta.trend.sma_indicator(df['close'], window=50)
+        df['stoch_k'] = ta.momentum.stoch(df['high'], df['low'], df['close'])
+        df['stoch_d'] = ta.momentum.stoch_signal(df['high'], df['low'], df['close'])
+        df['adx'] = ta.trend.adx(df['high'], df['low'], df['close'])
+        df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'])
+        df['obv'] = ta.volume.on_balance_volume(df['close'], df['volume'])
+        
+        # Price-based features
+        df['price_change'] = df['close'].pct_change()
+        df['high_low_ratio'] = df['high'] / df['low']
+        df['close_open_ratio'] = df['close'] / df['open']
+        df['volume_price_ratio'] = df['volume'] / df['close']
+        
+        # Moving averages
+        df['ma_ratio_20_50'] = df['sma_20'] / df['sma_50']
+        df['ema_ratio_20_50'] = df['ema_20'] / df['ema_50']
+        
+        # Bollinger Bands features
+        df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+        df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
+        
+        # RSI features
+        df['rsi_oversold'] = (df['rsi'] < 30).astype(int)
+        df['rsi_overbought'] = (df['rsi'] > 70).astype(int)
+        
+        # MACD features
+        df['macd_cross'] = (df['macd'] > df['macd_signal']).astype(int)
+        df['macd_histogram'] = df['macd'] - df['macd_signal']
+        
+        # Volume features
+        df['volume_ma'] = df['volume'].rolling(window=20).mean()
+        df['volume_ratio'] = df['volume'] / df['volume_ma']
+        
+        # Momentum features
+        df['momentum'] = df['close'] - df['close'].shift(5)
+        df['rate_of_change'] = df['close'].pct_change(5)
+        
+        # Volatility features
+        df['volatility'] = df['close'].rolling(window=20).std()
+        df['volatility_ratio'] = df['volatility'] / df['close']
+        
+        # Advanced features
+        # Price patterns
+        df['hammer'] = ((df['high'] - df['low']) > 3 * (df['open'] - df['close'])) & \
+                      ((df['close'] - df['low']) / (0.001 + df['high'] - df['low']) > 0.6)
+        df['doji'] = abs(df['open'] - df['close']) <= (df['high'] - df['low']) * 0.1
+        
+        # Support/Resistance levels
+        df['support_level'] = df['low'].rolling(window=20).min()
+        df['resistance_level'] = df['high'].rolling(window=20).max()
+        df['support_distance'] = (df['close'] - df['support_level']) / df['close']
+        df['resistance_distance'] = (df['resistance_level'] - df['close']) / df['close']
+        
+        # Volume analysis
+        df['volume_sma'] = df['volume'].rolling(window=20).mean()
+        df['volume_std'] = df['volume'].rolling(window=20).std()
+        df['volume_z_score'] = (df['volume'] - df['volume_sma']) / (df['volume_std'] + 0.001)
+        
+        # Price momentum indicators
+        df['price_acceleration'] = df['price_change'].diff()
+        df['volume_price_trend'] = df['volume'] * df['price_change']
+        
+        # Market structure
+        df['higher_high'] = (df['high'] > df['high'].shift(1)).astype(int)
+        df['lower_low'] = (df['low'] < df['low'].shift(1)).astype(int)
+        df['trend_strength'] = df['higher_high'] - df['lower_low']
+        
+        # Target variable (next period's direction)
+        df['target'] = np.where(df['close'].shift(-1) > df['close'], 1, 0)
+        
+        # Remove NaN values
+        df = df.dropna()
+        
+        # Feature selection (35+ features)
+        feature_columns = [
+            # Technical indicators
+            'rsi', 'macd', 'macd_signal', 'bb_position', 'bb_width',
+            'ema_ratio_20_50', 'ma_ratio_20_50', 'stoch_k', 'stoch_d',
+            'adx', 'atr', 'obv',
+            
+            # Price features
+            'price_change', 'high_low_ratio', 'close_open_ratio',
+            'rsi_oversold', 'rsi_overbought', 'macd_cross', 'macd_histogram',
+            'momentum', 'rate_of_change', 'volatility_ratio',
+            
+            # Volume features
+            'volume_ratio', 'volume_z_score', 'volume_price_trend',
+            
+            # Support/Resistance
+            'support_distance', 'resistance_distance',
+            
+            # Market structure
+            'trend_strength', 'price_acceleration',
+            
+            # Price patterns
+            'hammer', 'doji'
+        ]
+        
+        X = df[feature_columns]
+        y = df['target']
+        
+        return X, y, feature_columns
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi tạo ML features cho {symbol}: {e}")
+        return None, None, None
+
+def train_ml_models(symbol, timeframe):
+    """Train các mô hình Machine Learning với dữ liệu lịch sử"""
+    try:
+        ensure_ml_directories()
+        
+        # Lấy dữ liệu lịch sử (5000 candles)
+        data = load_or_fetch_historical_data(symbol, timeframe)
+        if data is None:
+            logger.warning(f"⚠️ Không thể lấy dữ liệu lịch sử cho {symbol} ({timeframe})")
+            return None
+            
+        logger.info(f"📊 Dữ liệu {symbol} ({timeframe}): {len(data['close'])} candles")
+        
+        if len(data['close']) < ML_MIN_SAMPLES:
+            logger.warning(f"⚠️ Không đủ dữ liệu lịch sử để train ML cho {symbol} ({timeframe}): {len(data['close'])} < {ML_MIN_SAMPLES}")
+            return None
+        
+        # Tạo features
+        X, y, feature_columns = create_ml_features(data, symbol, timeframe)
+        if X is None:
+            logger.warning(f"⚠️ Không thể tạo features cho {symbol} ({timeframe})")
+            return None
+            
+        logger.info(f"🔧 Features {symbol} ({timeframe}): {len(X)} samples, {len(feature_columns)} features")
+        
+        if len(X) < ML_MIN_SAMPLES:
+            logger.warning(f"⚠️ Không đủ features để train ML cho {symbol} ({timeframe}): {len(X)} < {ML_MIN_SAMPLES}")
+            return None
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        logger.info(f"📈 Training set: {len(X_train)} samples, Test set: {len(X_test)} samples")
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # Initialize models
+        models = {
+            'random_forest': RandomForestClassifier(n_estimators=100, random_state=42),
+            'gradient_boosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
+            'xgboost': xgb.XGBClassifier(n_estimators=100, random_state=42),
+            'lightgbm': lgb.LGBMClassifier(n_estimators=100, random_state=42),
+            'logistic_regression': LogisticRegression(random_state=42),
+            'svm': SVC(probability=True, random_state=42)
+        }
+        
+        trained_models = {}
+        model_performance = {}
+        
+        # Train each model
+        for name, model in models.items():
+            try:
+                logger.info(f"🔄 Training {name} cho {symbol} ({timeframe})...")
+                
+                if name in ['svm', 'logistic_regression']:
+                    model.fit(X_train_scaled, y_train)
+                    y_pred = model.predict(X_test_scaled)
+                    y_proba = model.predict_proba(X_test_scaled)[:, 1]
+                else:
+                    model.fit(X_train, y_train)
+                    y_pred = model.predict(X_test)
+                    y_proba = model.predict_proba(X_test)[:, 1]
+                
+                # Calculate performance
+                accuracy = accuracy_score(y_test, y_pred)
+                cv_scores = cross_val_score(model, X_train, y_train, cv=5)
+                
+                model_performance[name] = {
+                    'accuracy': accuracy,
+                    'cv_mean': cv_scores.mean(),
+                    'cv_std': cv_scores.std()
+                }
+                
+                trained_models[name] = {
+                    'model': model,
+                    'scaler': scaler if name in ['svm', 'logistic_regression'] else None,
+                    'feature_columns': feature_columns,
+                    'performance': model_performance[name]
+                }
+                
+                logger.info(f"✅ {name} trained - Accuracy: {accuracy:.3f}, CV: {cv_scores.mean():.3f}±{cv_scores.std():.3f}")
+                
+            except Exception as e:
+                logger.error(f"❌ Lỗi khi train {name} cho {symbol}: {e}")
+                continue
+        
+        # Save models
+        safe_symbol = symbol.replace('/', '_')
+        for name, model_data in trained_models.items():
+            model_file = os.path.join(ML_MODELS_DIR, f"{safe_symbol}_{timeframe}_{name}.joblib")
+            joblib.dump(model_data, model_file)
+        
+        # Save performance
+        performance_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_performance.json")
+        with open(performance_file, 'w') as f:
+            json.dump(model_performance, f, indent=2)
+        
+        logger.info(f"✅ Đã train và lưu {len(trained_models)} mô hình ML cho {symbol} ({timeframe})")
+        return trained_models
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi train ML models cho {symbol}: {e}")
+        return None
+
+def predict_with_ml(symbol, timeframe, current_data):
+    """Dự đoán sử dụng Machine Learning"""
+    try:
+        ensure_ml_directories()
+        
+        # Load best performing model
+        performance_file = os.path.join(ML_DATA_DIR, f"{symbol}_{timeframe}_performance.json")
+        if not os.path.exists(performance_file):
+            logger.warning(f"⚠️ Không tìm thấy mô hình ML cho {symbol} ({timeframe})")
+            return None
+        
+        with open(performance_file, 'r') as f:
+            performance = json.load(f)
+        
+        # Find best model
+        best_model_name = max(performance.keys(), key=lambda x: performance[x]['cv_mean'])
+        best_model_file = os.path.join(ML_MODELS_DIR, f"{symbol}_{timeframe}_{best_model_name}.joblib")
+        
+        if not os.path.exists(best_model_file):
+            logger.warning(f"⚠️ Không tìm thấy file mô hình {best_model_name} cho {symbol}")
+            return None
+        
+        # Load model
+        model_data = joblib.load(best_model_file)
+        model = model_data['model']
+        scaler = model_data['scaler']
+        feature_columns = model_data['feature_columns']
+        
+        # Create features for current data
+        X_current, _, _ = create_ml_features(current_data, symbol, timeframe)
+        if X_current is None or X_current.empty:
+            return None
+        
+        # Get latest features
+        latest_features = X_current[feature_columns].iloc[-1:].values
+        
+        # Scale if needed
+        if scaler is not None:
+            latest_features = scaler.transform(latest_features)
+        
+        # Make prediction
+        prediction_proba = model.predict_proba(latest_features)[0]
+        prediction_class = model.predict(latest_features)[0]
+        
+        # Calculate confidence
+        confidence = max(prediction_proba)
+        
+        # Determine signal
+        if prediction_class == 1 and confidence > ML_CONFIDENCE_THRESHOLD:
+            signal = 'Long'
+        elif prediction_class == 0 and confidence > ML_CONFIDENCE_THRESHOLD:
+            signal = 'Short'
+        else:
+            signal = 'Hold'
+        
+        return {
+            'signal': signal,
+            'confidence': confidence,
+            'probability': prediction_proba,
+            'model_name': best_model_name,
+            'model_performance': performance[best_model_name]
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi dự đoán ML cho {symbol}: {e}")
+        return None
+
+def analyze_convergence(data, lookback_periods=None):
+    """Phân tích hội tụ (Convergence Analysis)"""
+    if not CONVERGENCE_ANALYSIS_ENABLED:
+        return None
+    
+    if lookback_periods is None:
+        lookback_periods = CONVERGENCE_LOOKBACK_PERIODS
+    
+    try:
+        close_prices = data['close']
+        convergence_analysis = {
+            'overall_convergence': 0.0,
+            'period_convergence': {},
+            'signals': [],
+            'strength': 0.0
+        }
+        
+        for period in lookback_periods:
+            if len(close_prices) < period * 2:
+                continue
+            
+            # Tính toán các chỉ số cho period này
+            recent_prices = close_prices[-period:]
+            older_prices = close_prices[-period*2:-period]
+            
+            # 1. Price Convergence
+            recent_std = np.std(recent_prices)
+            older_std = np.std(older_prices)
+            price_convergence = 1 - (recent_std / older_std) if older_std > 0 else 0
+            
+            # 2. Volume Convergence
+            recent_volume = data['volume'][-period:]
+            older_volume = data['volume'][-period*2:-period]
+            recent_vol_std = np.std(recent_volume)
+            older_vol_std = np.std(older_volume)
+            volume_convergence = 1 - (recent_vol_std / older_vol_std) if older_vol_std > 0 else 0
+            
+            # 3. Momentum Convergence
+            recent_momentum = np.diff(recent_prices)
+            older_momentum = np.diff(older_prices)
+            # Remove NaN values
+            recent_momentum = recent_momentum[~np.isnan(recent_momentum)]
+            older_momentum = older_momentum[~np.isnan(older_momentum)]
+            recent_mom_std = np.std(recent_momentum) if len(recent_momentum) > 0 else 0
+            older_mom_std = np.std(older_momentum) if len(older_momentum) > 0 else 0
+            momentum_convergence = 1 - (recent_mom_std / older_mom_std) if older_mom_std > 0 else 0
+            
+            # 4. RSI Convergence
+            rsi = ta.momentum.rsi(close_prices, window=14)
+            recent_rsi = rsi[-period:]
+            older_rsi = rsi[-period*2:-period]
+            # Remove NaN values
+            recent_rsi = recent_rsi[~np.isnan(recent_rsi)]
+            older_rsi = older_rsi[~np.isnan(older_rsi)]
+            recent_rsi_std = np.std(recent_rsi) if len(recent_rsi) > 0 else 0
+            older_rsi_std = np.std(older_rsi) if len(older_rsi) > 0 else 0
+            rsi_convergence = 1 - (recent_rsi_std / older_rsi_std) if older_rsi_std > 0 else 0
+            
+            # 5. MACD Convergence
+            macd = ta.trend.macd(close_prices)
+            recent_macd = macd[-period:]
+            older_macd = macd[-period*2:-period]
+            # Remove NaN values
+            recent_macd = recent_macd[~np.isnan(recent_macd)]
+            older_macd = older_macd[~np.isnan(older_macd)]
+            recent_macd_std = np.std(recent_macd) if len(recent_macd) > 0 else 0
+            older_macd_std = np.std(older_macd) if len(older_macd) > 0 else 0
+            macd_convergence = 1 - (recent_macd_std / older_macd_std) if older_macd_std > 0 else 0
+            
+            # Tính convergence tổng hợp cho period
+            period_convergence = np.mean([
+                price_convergence, volume_convergence, momentum_convergence,
+                rsi_convergence, macd_convergence
+            ])
+            
+            convergence_analysis['period_convergence'][f'{period}_periods'] = {
+                'overall': period_convergence,
+                'price': price_convergence,
+                'volume': volume_convergence,
+                'momentum': momentum_convergence,
+                'rsi': rsi_convergence,
+                'macd': macd_convergence
+            }
+            
+            # Tạo tín hiệu dựa trên convergence
+            if period_convergence > CONVERGENCE_THRESHOLD:
+                # Convergence cao → có thể sắp breakout
+                current_price = close_prices[-1]
+                sma_20 = ta.trend.sma_indicator(close_prices, window=20).iloc[-1]
+                
+                if current_price > sma_20:
+                    signal = 'Long'
+                else:
+                    signal = 'Short'
+                
+                convergence_analysis['signals'].append({
+                    'period': period,
+                    'signal': signal,
+                    'strength': period_convergence,
+                    'type': 'convergence_breakout'
+                })
+        
+        # Tính convergence tổng thể
+        if convergence_analysis['period_convergence']:
+            overall_convergence = np.mean([
+                data['overall'] for data in convergence_analysis['period_convergence'].values()
+            ])
+            convergence_analysis['overall_convergence'] = overall_convergence
+            convergence_analysis['strength'] = overall_convergence
+        
+        return convergence_analysis
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi phân tích convergence: {e}")
+        return None
 
 def save_prediction(symbol, timeframe, prediction_data, current_price):
     """Lưu dự đoán mới vào hệ thống"""
@@ -978,7 +1437,7 @@ def detect_elliott_wave(highs, lows, closes):
     return wave_pattern
 
 def analyze_timeframe(data, timeframe, current_price, symbol=None):
-    """Phân tích kỹ thuật tối ưu với 12 chỉ số cốt lõi và trọng số cao cho divergence"""
+    """Phân tích kỹ thuật tối ưu với 12 chỉ số cốt lõi, ML và phân tích hội tụ"""
     # Chuyển đổi numpy array sang pandas Series để tương thích với thư viện ta
     close = pd.Series(data['close'])
     high = pd.Series(data['high'])
@@ -1270,13 +1729,64 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     # === 15. TÍNH TOÁN ĐIỂM ENTRY ===
     entry_points = calculate_entry_points(current_price, high, low, close, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance)
 
-    # === 16. TRẢ VỀ KẾT QUẢ TỐI ƯU ===
+    # === 15. MACHINE LEARNING PREDICTION ===
+    ml_prediction = None
+    try:
+        ml_prediction = predict_with_ml(symbol, timeframe, data)
+        if ml_prediction and ml_prediction['confidence'] > ML_CONFIDENCE_THRESHOLD:
+            # Thêm tín hiệu ML vào danh sách với trọng số cao
+            ml_weight = int(ml_prediction['confidence'] * 5)  # Trọng số dựa trên confidence
+            for _ in range(ml_weight):
+                final_signals.append(ml_prediction['signal'])
+            logger.info(f"🤖 ML {ml_prediction['model_name']}: {ml_prediction['signal']} (Confidence: {ml_prediction['confidence']:.3f})")
+    except Exception as e:
+        logger.warning(f"⚠️ Lỗi ML prediction cho {symbol}: {e}")
+
+    # === 16. PHÂN TÍCH HỘI TỤ (CONVERGENCE ANALYSIS) ===
+    convergence_analysis = None
+    try:
+        convergence_analysis = analyze_convergence(data)
+        if convergence_analysis and convergence_analysis['overall_convergence'] > CONVERGENCE_THRESHOLD:
+            # Thêm tín hiệu convergence vào danh sách
+            convergence_weight = int(convergence_analysis['strength'] * 3)
+            for signal_info in convergence_analysis['signals']:
+                for _ in range(convergence_weight):
+                    final_signals.append(signal_info['signal'])
+            logger.info(f"🎯 Convergence Analysis: {convergence_analysis['overall_convergence']:.3f} - {len(convergence_analysis['signals'])} signals")
+    except Exception as e:
+        logger.warning(f"⚠️ Lỗi convergence analysis cho {symbol}: {e}")
+
+    # === 17. TÍNH TOÁN CONSENSUS CUỐI CÙNG (CẬP NHẬT) ===
+    all_signals = final_signals + extra_signals
+    
+    long_count = all_signals.count('Long')
+    short_count = all_signals.count('Short')
+    hold_count = all_signals.count('Hold')
+    
+    total_signals = len(all_signals)
+    
+    if total_signals == 0:
+        consensus = 'Hold'
+        confidence = 0.0
+    else:
+        if long_count > short_count:
+            consensus = 'Long'
+            confidence = long_count / total_signals
+        elif short_count > long_count:
+            consensus = 'Short'
+            confidence = short_count / total_signals
+        else:
+            consensus = 'Hold'
+            confidence = 0.5
+
+    # === 18. TRẢ VỀ KẾT QUẢ TỐI ƯU ===
     return {
         'trend': 'bullish' if consensus == 'Long' else 'bearish' if consensus == 'Short' else 'neutral',
         'signal': consensus,
         'confidence': confidence,
         'consensus_ratio': confidence,  # Thêm consensus_ratio để tương thích
         'strength': divergence_strength,
+        'timeframe': timeframe,  # Thêm timeframe vào kết quả
         'indicators': {
             'rsi': get_last(rsi),
             'stoch_k': get_last(stoch_k),
@@ -1311,6 +1821,8 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         },
         'divergences': divergences,
         'divergence_consensus': divergence_consensus,
+        'ml_prediction': ml_prediction,
+        'convergence_analysis': convergence_analysis,
         'entry_points': entry_points,
         'price_pattern': price_pattern,
         'candlestick_patterns': candlestick_patterns,
@@ -1572,7 +2084,7 @@ def format_analysis_report(results):
     report += f"⏰ Thời gian: {current_time}\n"
     report += f"📊 Ngưỡng tối thiểu: {SIGNAL_THRESHOLD:.1%}{accuracy_summary}\n"
     report += f"💰 Tài sản: Crypto, Vàng, Dầu\n"
-    report += f"🎯 <b>12 CHỈ SỐ CỐT LÕI + DIVERGENCE ƯU TIÊN CAO</b>\n\n"
+    report += f"🎯 <b>12 CHỈ SỐ CỐT LÕI + ML + CONVERGENCE ANALYSIS</b>\n\n"
     
     if not results:
         report += "📊 Không có xu hướng mạnh nào được phát hiện."
@@ -1598,7 +2110,29 @@ def format_analysis_report(results):
                 timeframe = analysis['timeframe']
                 report += f"\n📊 <b>Timeframe {timeframe}:</b>\n"
                 
-                # === 1. DIVERGENCE/CONVERGENCE - ƯU TIÊN CAO NHẤT ===
+                # === 1. MACHINE LEARNING PREDICTION ===
+                ml_prediction = analysis.get('ml_prediction')
+                if ml_prediction and ml_prediction.get('confidence', 0) > ML_CONFIDENCE_THRESHOLD:
+                    report += f"🤖 <b>MACHINE LEARNING PREDICTION:</b>\n"
+                    report += f"  • Model: {ml_prediction['model_name']}\n"
+                    report += f"  • Tín hiệu: {ml_prediction['signal']}\n"
+                    report += f"  • Confidence: {ml_prediction['confidence']:.3f}\n"
+                    report += f"  • Accuracy: {ml_prediction['model_performance']['accuracy']:.3f}\n"
+                    report += f"  • CV Score: {ml_prediction['model_performance']['cv_mean']:.3f}±{ml_prediction['model_performance']['cv_std']:.3f}\n\n"
+
+                # === 2. CONVERGENCE ANALYSIS ===
+                convergence_analysis = analysis.get('convergence_analysis')
+                if convergence_analysis and convergence_analysis.get('overall_convergence', 0) > CONVERGENCE_THRESHOLD:
+                    report += f"🎯 <b>CONVERGENCE ANALYSIS:</b>\n"
+                    report += f"  • Overall Convergence: {convergence_analysis['overall_convergence']:.3f}\n"
+                    report += f"  • Strength: {convergence_analysis['strength']:.3f}\n"
+                    report += f"  • Signals: {len(convergence_analysis['signals'])}\n"
+                    
+                    for signal in convergence_analysis['signals']:
+                        report += f"  • {signal['period']} periods: {signal['signal']} (Strength: {signal['strength']:.3f})\n"
+                    report += "\n"
+
+                # === 3. DIVERGENCE/CONVERGENCE - ƯU TIÊN CAO NHẤT ===
                 divergence_consensus = analysis.get('divergence_consensus', {})
                 if divergence_consensus.get('signal') != 'Hold' and divergence_consensus.get('strength', 0) > 0.2:
                     strength_emoji = "🔥" if divergence_consensus['strength'] > 0.5 else "⚡"
@@ -1796,6 +2330,53 @@ def prediction_update_scheduler():
     prediction_thread = threading.Thread(target=update_predictions_periodically, daemon=True)
     prediction_thread.start()
     logger.info(f"📊 Đã khởi động Prediction Update Scheduler (cập nhật mỗi {PREDICTION_UPDATE_INTERVAL//3600} giờ)")
+
+def ml_model_trainer_scheduler():
+    """Lập lịch train ML models định kỳ"""
+    def train_models_periodically():
+        while True:
+            try:
+                logger.info("🤖 Bắt đầu train ML models cho BTC và ETH...")
+                
+                # Chỉ train cho BTC và ETH theo yêu cầu
+                ml_symbols = ['BTC/USDT', 'ETH/USDT']
+                ml_timeframes = ['1h', '4h', '1d']  # Chỉ train cho 3 timeframe chính
+                
+                for symbol in ml_symbols:
+                    for timeframe in ml_timeframes:
+                        try:
+                            logger.info(f"🔄 Training ML models cho {symbol} ({timeframe})...")
+                            
+                            # Kiểm tra dữ liệu trước khi train
+                            data = load_or_fetch_historical_data(symbol, timeframe)
+                            if data is None:
+                                logger.warning(f"⚠️ Không thể lấy dữ liệu cho {symbol} ({timeframe})")
+                                continue
+                            
+                            logger.info(f"📊 Dữ liệu {symbol} ({timeframe}): {len(data['close'])} candles")
+                            
+                            trained_models = train_ml_models(symbol, timeframe)
+                            if trained_models:
+                                logger.info(f"✅ Đã train thành công {len(trained_models)} models cho {symbol} ({timeframe})")
+                            else:
+                                logger.warning(f"⚠️ Không thể train models cho {symbol} ({timeframe})")
+                            
+                            time.sleep(5)  # Chờ 5 giây giữa các lần train
+                        except Exception as e:
+                            logger.error(f"❌ Lỗi khi train ML cho {symbol} ({timeframe}): {e}")
+                            continue
+                
+                logger.info(f"⏰ Chờ {ML_UPDATE_INTERVAL} giây để train ML models tiếp theo...")
+                time.sleep(ML_UPDATE_INTERVAL)
+                
+            except Exception as e:
+                logger.error(f"Lỗi trong ml_model_trainer_scheduler: {e}")
+                time.sleep(3600)  # Chờ 1 giờ nếu có lỗi
+    
+    # Khởi động thread train ML models định kỳ
+    ml_thread = threading.Thread(target=train_models_periodically, daemon=True)
+    ml_thread.start()
+    logger.info(f"🤖 Đã khởi động ML Model Trainer Scheduler (train mỗi {ML_UPDATE_INTERVAL//3600} giờ)")
 
 def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance):
     """Tính toán các điểm entry hợp lý"""
@@ -2526,14 +3107,206 @@ def calculate_divergence_consensus(divergences):
         else:
             return {'signal': 'Hold', 'strength': 0, 'count': 0}
 
+def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
+    """Lấy dữ liệu lịch sử cho ML training từ Binance API"""
+    try:
+        if limit is None:
+            limit = ML_HISTORICAL_CANDLES
+            
+        logger.info(f"📊 Đang lấy dữ liệu lịch sử cho {symbol} ({timeframe}) - {limit} candles...")
+        
+        # Lấy dữ liệu từ Binance
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        
+        if not ohlcv or len(ohlcv) < ML_MIN_SAMPLES:
+            logger.warning(f"⚠️ Không đủ dữ liệu lịch sử cho {symbol} ({timeframe}): {len(ohlcv) if ohlcv else 0} candles")
+            return None
+        
+        # Chuyển đổi thành DataFrame
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        
+        # Lưu dữ liệu gốc (thay thế ký tự / bằng _)
+        safe_symbol = symbol.replace('/', '_')
+        data_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_historical.csv")
+        df.to_csv(data_file)
+        
+        logger.info(f"✅ Đã lấy và lưu {len(df)} candles lịch sử cho {symbol} ({timeframe})")
+        
+        return {
+            'open': df['open'].values,
+            'high': df['high'].values,
+            'low': df['low'].values,
+            'close': df['close'].values,
+            'volume': df['volume'].values,
+            'timestamp': df.index.values
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi lấy dữ liệu lịch sử cho {symbol} ({timeframe}): {e}")
+        return None
+
+def load_or_fetch_historical_data(symbol, timeframe):
+    """Load dữ liệu lịch sử từ file hoặc fetch từ API nếu chưa có"""
+    try:
+        safe_symbol = symbol.replace('/', '_')
+        data_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_historical.csv")
+        
+        # Kiểm tra xem file có tồn tại và còn mới không (trong vòng 24h)
+        if os.path.exists(data_file):
+            file_time = os.path.getmtime(data_file)
+            current_time = time.time()
+            
+            # Nếu file còn mới (trong vòng 24h), load từ file
+            if current_time - file_time < 86400:  # 24 giờ
+                logger.info(f"📂 Loading dữ liệu lịch sử từ file cho {symbol} ({timeframe})...")
+                df = pd.read_csv(data_file, index_col='timestamp', parse_dates=True)
+                
+                return {
+                    'open': df['open'].values,
+                    'high': df['high'].values,
+                    'low': df['low'].values,
+                    'close': df['close'].values,
+                    'volume': df['volume'].values,
+                    'timestamp': df.index.values
+                }
+        
+        # Nếu không có file hoặc file cũ, fetch từ API
+        return fetch_historical_data_for_ml(symbol, timeframe)
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi load/fetch dữ liệu lịch sử cho {symbol} ({timeframe}): {e}")
+        return None
+
+def display_ml_features_info():
+    """Hiển thị thông tin về các features ML"""
+    features_info = {
+        'Technical Indicators (12)': [
+            'RSI - Relative Strength Index',
+            'MACD - Moving Average Convergence Divergence',
+            'MACD Signal - MACD Signal Line',
+            'BB Position - Bollinger Bands Position',
+            'BB Width - Bollinger Bands Width',
+            'EMA Ratio 20/50 - Exponential Moving Average Ratio',
+            'MA Ratio 20/50 - Simple Moving Average Ratio',
+            'Stoch K - Stochastic Oscillator %K',
+            'Stoch D - Stochastic Oscillator %D',
+            'ADX - Average Directional Index',
+            'ATR - Average True Range',
+            'OBV - On Balance Volume'
+        ],
+        'Price Features (8)': [
+            'Price Change - Percentage Change',
+            'High/Low Ratio - High to Low Price Ratio',
+            'Close/Open Ratio - Close to Open Price Ratio',
+            'RSI Oversold - RSI Below 30',
+            'RSI Overbought - RSI Above 70',
+            'MACD Cross - MACD Above Signal',
+            'MACD Histogram - MACD - Signal',
+            'Momentum - 5-period Price Change',
+            'Rate of Change - 5-period Percentage Change',
+            'Volatility Ratio - Standard Deviation Ratio'
+        ],
+        'Volume Features (3)': [
+            'Volume Ratio - Current Volume to MA',
+            'Volume Z-Score - Volume Standardization',
+            'Volume Price Trend - Volume * Price Change'
+        ],
+        'Support/Resistance (2)': [
+            'Support Distance - Distance to Support Level',
+            'Resistance Distance - Distance to Resistance Level'
+        ],
+        'Market Structure (2)': [
+            'Trend Strength - Higher Highs vs Lower Lows',
+            'Price Acceleration - Rate of Price Change'
+        ],
+        'Price Patterns (2)': [
+            'Hammer - Hammer Candlestick Pattern',
+            'Doji - Doji Candlestick Pattern'
+        ]
+    }
+    
+    print("\n🤖 MACHINE LEARNING FEATURES (35+ Features)")
+    print("=" * 50)
+    
+    total_features = 0
+    for category, features in features_info.items():
+        print(f"\n📊 {category}:")
+        for feature in features:
+            print(f"   • {feature}")
+        total_features += len(features)
+    
+    print(f"\n📈 Tổng cộng: {total_features} features")
+    print("🎯 Target: Next period price direction (1 = Up, 0 = Down)")
+    print("📊 Training Data: 5000 historical candles from Binance API")
+    print("🤖 Models: Random Forest, XGBoost, LightGBM, Gradient Boosting, Logistic Regression, SVM")
+    print("🔄 Auto-training: Every 24 hours")
+    print("💾 Data Storage: Historical data cached locally")
+
+def get_ml_training_status():
+    """Kiểm tra trạng thái training ML models"""
+    try:
+        ensure_ml_directories()
+        
+        status = {
+            'models_trained': [],
+            'models_missing': [],
+            'last_training': None,
+            'data_files': []
+        }
+        
+        # Kiểm tra models đã train
+        for symbol in ['BTC/USDT', 'ETH/USDT', 'BNB/USDT']:
+            for timeframe in ['1h', '4h', '1d']:
+                model_files = []
+                for model_type in ['random_forest', 'xgboost', 'lightgbm', 'gradient_boosting', 'logistic_regression', 'svm']:
+                    safe_symbol = symbol.replace('/', '_')
+                    model_file = os.path.join(ML_MODELS_DIR, f"{safe_symbol}_{timeframe}_{model_type}.joblib")
+                    if os.path.exists(model_file):
+                        model_files.append(model_type)
+                
+                if model_files:
+                    status['models_trained'].append(f"{symbol} ({timeframe}): {len(model_files)} models")
+                else:
+                    status['models_missing'].append(f"{symbol} ({timeframe})")
+        
+        # Kiểm tra data files
+        data_files = [f for f in os.listdir(ML_DATA_DIR) if f.endswith('_historical.csv')]
+        status['data_files'] = data_files
+        
+        return status
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi kiểm tra trạng thái ML: {e}")
+        return None
+
 def main():
-    logger.info("Bắt đầu phân tích xu hướng ngắn hạn trên Binance Spot...")
+    logger.info("Bắt đầu phân tích xu hướng ngắn hạn với ML và Convergence Analysis...")
+    
+    # Đảm bảo các thư mục cần thiết
+    ensure_prediction_data_dir()
+    ensure_ml_directories()
+    
+    # Hiển thị thông tin ML features
+    display_ml_features_info()
+    
+    # Kiểm tra trạng thái ML training
+    ml_status = get_ml_training_status()
+    if ml_status:
+        print(f"\n📊 ML Training Status:")
+        print(f"✅ Models trained: {len(ml_status['models_trained'])}")
+        print(f"❌ Models missing: {len(ml_status['models_missing'])}")
+        print(f"📁 Data files: {len(ml_status['data_files'])}")
     
     # Khởi động Telegram Report Scheduler
     telegram_report_scheduler()
     
     # Khởi động Prediction Update Scheduler
     prediction_update_scheduler()
+    
+    # Khởi động ML Model Trainer Scheduler
+    ml_model_trainer_scheduler()
     
     symbols = get_usdt_symbols()
     logger.info(f"Đã chọn {len(symbols)} tài sản: {symbols}")
@@ -2561,6 +3334,8 @@ def main():
     
     logger.info(f"🤖 Bot đang chạy và gửi báo cáo Telegram mỗi {TELEGRAM_REPORT_INTERVAL//3600} giờ...")
     logger.info(f"📊 Hệ thống theo dõi dự đoán đang hoạt động (cập nhật mỗi {PREDICTION_UPDATE_INTERVAL//3600} giờ)")
+    logger.info(f"🤖 ML Model Trainer đang hoạt động (train mỗi {ML_UPDATE_INTERVAL//3600} giờ)")
+    logger.info(f"🎯 Convergence Analysis đã được kích hoạt")
     logger.info(f"📱 Nhấn Ctrl+C để dừng bot")
     
     # Giữ bot chạy để Telegram scheduler hoạt động

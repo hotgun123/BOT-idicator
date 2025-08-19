@@ -1689,6 +1689,10 @@ def analyze_coin(symbol):
 
 def send_telegram_message(message):
     """Gửi tin nhắn qua Telegram Bot"""
+    logger.info(f"🔍 DEBUG: Bắt đầu gửi Telegram message")
+    logger.info(f"🔍 DEBUG: TELEGRAM_BOT_TOKEN = {TELEGRAM_BOT_TOKEN[:10]}...")
+    logger.info(f"🔍 DEBUG: TELEGRAM_CHAT_ID = {TELEGRAM_CHAT_ID}")
+    
     if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE" or TELEGRAM_CHAT_ID == "YOUR_CHAT_ID_HERE":
         logger.warning("Chưa cấu hình Telegram Bot Token hoặc Chat ID")
         return False
@@ -1700,15 +1704,21 @@ def send_telegram_message(message):
             'text': message,
             'parse_mode': 'HTML'
         }
+        logger.info(f"🔍 DEBUG: Gửi request đến {url}")
+        logger.info(f"🔍 DEBUG: Data = {data}")
+        
         response = requests.post(url, data=data, timeout=10)
+        logger.info(f"🔍 DEBUG: Response status = {response.status_code}")
+        logger.info(f"🔍 DEBUG: Response text = {response.text}")
+        
         if response.status_code == 200:
-            logger.info("Đã gửi báo cáo qua Telegram thành công")
+            logger.info("✅ Đã gửi báo cáo qua Telegram thành công")
             return True
         else:
-            logger.error(f"Lỗi khi gửi Telegram: {response.status_code} - {response.text}")
+            logger.error(f"❌ Lỗi khi gửi Telegram: {response.status_code} - {response.text}")
             return False
     except Exception as e:
-        logger.error(f"Lỗi khi gửi Telegram: {e}")
+        logger.error(f"❌ Lỗi khi gửi Telegram: {e}")
         return False
 
 def format_coin_report(result):
@@ -3075,8 +3085,11 @@ def main():
         logger.info(f"📈 Thống kê độ chính xác: {overall['accuracy']:.1%} ({overall['accurate_predictions']}/{overall['total_predictions']})")
     
     # Gửi báo cáo Telegram
+    logger.info(f"🔍 DEBUG: Có {len(results)} kết quả để gửi")
     if results:
         report = format_analysis_report(results)
+        logger.info(f"🔍 DEBUG: Report length = {len(report)} characters")
+        logger.info(f"🔍 DEBUG: Report preview = {report[:200]}...")
         success = send_telegram_message(report)
         if success:
             logger.info("📱 Đã gửi báo cáo Telegram thành công!")

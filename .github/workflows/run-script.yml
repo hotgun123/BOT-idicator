@@ -2,8 +2,8 @@ name: Trading Bot Analysis
 
 on:
   schedule:
-    # Chạy cứ 2 giờ một lần (UTC time)
-    - cron: '0 */2 * * *'
+    # Chạy cứ 2 phút một lần (UTC time) - TEST MODE
+    - cron: '*/2 * * * *'
   workflow_dispatch:  # Cho phép chạy thủ công
   push:
     branches: [ main, master ]  # Chạy khi push code mới

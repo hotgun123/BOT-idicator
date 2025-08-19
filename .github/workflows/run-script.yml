@@ -82,21 +82,4 @@ jobs:
           ml_data/
         retention-days: 1
 
-name: Test Schedule
 
-on:
-  schedule:
-    # Test cron job mỗi 5 phút
-    - cron: '*/5 * * * *'
-  workflow_dispatch:
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Test cron job
-      run: |
-        echo "🕐 Cron job test - $(date)"
-        echo "✅ GitHub Actions cron job đang hoạt động!"
-        echo "🌍 Timezone: UTC"
-        echo "📅 Current time: $(date -u)"

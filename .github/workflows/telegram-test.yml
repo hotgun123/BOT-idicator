@@ -1,0 +1,80 @@
+name: Telegram Test
+
+on:
+  workflow_dispatch:  # Chỉ chạy thủ công
+
+jobs:
+  telegram-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5  # Chỉ 5 phút
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests python-dotenv
+        
+    - name: Create .env file
+      run: |
+        echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
+        echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+        
+    - name: Test Telegram connection
+      run: |
+        python -c "
+        import os
+        import requests
+        from datetime import datetime
+        from dotenv import load_dotenv
+        
+        load_dotenv()
+        
+        TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+        TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+        
+        print(f'Bot Token: {TELEGRAM_BOT_TOKEN[:20]}...')
+        print(f'Chat ID: {TELEGRAM_CHAT_ID}')
+        
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        message = f'''
+🤖 <b>TELEGRAM TEST</b>
+
+✅ <b>Kết nối thành công!</b>
+⏰ Thời gian: {current_time}
+🌐 Environment: GitHub Actions
+
+🔧 <b>Thông tin:</b>
+• Bot Token: {TELEGRAM_BOT_TOKEN[:20]}...
+• Chat ID: {TELEGRAM_CHAT_ID}
+• Status: Connected
+
+🎉 <b>Bot đang hoạt động bình thường!</b>
+        '''
+        
+        url = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage'
+        data = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'text': message,
+            'parse_mode': 'HTML'
+        }
+        
+        response = requests.post(url, data=data, timeout=10)
+        
+        if response.status_code == 200:
+            print('✅ Gửi message thành công!')
+            print('📱 Kiểm tra Telegram để xem message')
+        else:
+            print(f'❌ Lỗi: {response.status_code} - {response.text}')
+        "
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

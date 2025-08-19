@@ -11,7 +11,7 @@ on:
 jobs:
   analyze-trading:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Timeout sau 30 phút
+    timeout-minutes: 60  # Tăng timeout lên 60 phút
     
     steps:
     - name: Checkout code
@@ -53,7 +53,7 @@ jobs:
         
     - name: Run trading analysis
       run: |
-        python script.py
+        python script_github_actions.py
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

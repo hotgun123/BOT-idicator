@@ -3084,6 +3084,14 @@ def main():
         overall = accuracy_data['overall']
         logger.info(f"📈 Thống kê độ chính xác: {overall['accuracy']:.1%} ({overall['accurate_predictions']}/{overall['total_predictions']})")
     
+    # Test Telegram trước
+    logger.info("🧪 TESTING TELEGRAM CONNECTION...")
+    test_success = send_telegram_message("🤖 Bot test message - GitHub Actions đang chạy!")
+    if test_success:
+        logger.info("✅ Telegram test thành công!")
+    else:
+        logger.error("❌ Telegram test thất bại!")
+    
     # Gửi báo cáo Telegram
     logger.info(f"🔍 DEBUG: Có {len(results)} kết quả để gửi")
     if results:

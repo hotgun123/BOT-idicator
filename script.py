@@ -11,8 +11,18 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import time
 import logging
+import warnings
 from dotenv import load_dotenv
 import ta  # Thay thế TA-Lib với thư viện ta
+
+# Suppress ML warnings
+# The warning "No further splits with positive gain" is not an error - it means the model
+# has reached its maximum potential with the current data and cannot find more useful splits.
+# This is normal behavior and doesn't affect model performance.
+warnings.filterwarnings('ignore', category=UserWarning, module='lightgbm')
+warnings.filterwarnings('ignore', message='.*No further splits with positive gain.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+warnings.filterwarnings('ignore', message='.*ConvergenceWarning.*')
 
 # Machine Learning imports
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -51,37 +61,14 @@ exchange = ccxt.binance({
     }
 })
 
-# Khởi tạo kết nối với Exness cho hàng hóa (tạm thời comment lại)
-# exness_exchange = ccxt.exness({
-#     'enableRateLimit': True,
-#     'options': {
-#         'defaultType': 'spot',
-#         'adjustForTimeDifference': True,
-#     }
-# })
-exness_exchange = None  # Tạm thời không sử dụng Exness
-
-# Cấu hình cho TradingView và Investing.com
-TRADINGVIEW_SYMBOLS = {
-    'XAU/USD': 'XAUUSD',  # Vàng
-    'WTI/USD': 'USOIL'    # Dầu WTI
-}
-
-INVESTING_SYMBOLS = {
-    'XAU/USD': 'gold',    # Vàng trên Investing.com
-    'WTI/USD': 'wti-crude-oil'  # Dầu WTI trên Investing.com
-}
-
-# Cấu hình cho Exness
-EXNESS_SYMBOLS = {
-    'XAU/USD': 'XAUUSD',  # Vàng trên Exness
-    'WTI/USD': 'WTIUSD'   # Dầu WTI trên Exness
-}
+# Khởi tạo kết nối với Exness cho hàng hóa (đã loại bỏ)
+exness_exchange = None
 
 # Cấu hình
 # Chỉ phân tích crypto; tạm thời bỏ vàng và dầu do nguồn dữ liệu không ổn định
 SYMBOLS = ['BTC/USDT', 'ETH/USDT']  # Bỏ BNB theo yêu cầu của user
 TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
+ML_TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d']  # Timeframes cho ML training
 CANDLE_LIMIT = 200
 SIGNAL_THRESHOLD = 0.6 # Giảm xuống 40% để dễ có tín hiệu hơn
 RETRY_ATTEMPTS = 2
@@ -298,7 +285,14 @@ def train_ml_models(symbol, timeframe):
             'random_forest': RandomForestClassifier(n_estimators=100, random_state=42),
             'gradient_boosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
             'xgboost': xgb.XGBClassifier(n_estimators=100, random_state=42),
-            'lightgbm': lgb.LGBMClassifier(n_estimators=100, random_state=42),
+            'lightgbm': lgb.LGBMClassifier(
+                n_estimators=100, 
+                random_state=42,
+                verbose=-1,  # Suppress LightGBM output
+                silent=True,  # Suppress LightGBM warnings
+                min_child_samples=10,  # Minimum samples per leaf to avoid overfitting
+                min_split_gain=0.0  # Allow splits with zero gain
+            ),
             'logistic_regression': LogisticRegression(random_state=42),
             'svm': SVC(probability=True, random_state=42)
         }
@@ -311,14 +305,18 @@ def train_ml_models(symbol, timeframe):
             try:
                 logger.info(f"🔄 Training {name} cho {symbol} ({timeframe})...")
                 
-                if name in ['svm', 'logistic_regression']:
-                    model.fit(X_train_scaled, y_train)
-                    y_pred = model.predict(X_test_scaled)
-                    y_proba = model.predict_proba(X_test_scaled)[:, 1]
-                else:
-                    model.fit(X_train, y_train)
-                    y_pred = model.predict(X_test)
-                    y_proba = model.predict_proba(X_test)[:, 1]
+                # Suppress warnings during training
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    
+                    if name in ['svm', 'logistic_regression']:
+                        model.fit(X_train_scaled, y_train)
+                        y_pred = model.predict(X_test_scaled)
+                        y_proba = model.predict_proba(X_test_scaled)[:, 1]
+                    else:
+                        model.fit(X_train, y_train)
+                        y_pred = model.predict(X_test)
+                        y_proba = model.predict_proba(X_test)[:, 1]
                 
                 # Calculate performance
                 accuracy = accuracy_score(y_test, y_pred)
@@ -366,8 +364,11 @@ def predict_with_ml(symbol, timeframe, current_data):
     try:
         ensure_ml_directories()
         
+        # Use safe symbol format (same as in train_ml_models)
+        safe_symbol = symbol.replace('/', '_')
+        
         # Load best performing model
-        performance_file = os.path.join(ML_DATA_DIR, f"{symbol}_{timeframe}_performance.json")
+        performance_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_performance.json")
         if not os.path.exists(performance_file):
             logger.warning(f"⚠️ Không tìm thấy mô hình ML cho {symbol} ({timeframe})")
             return None
@@ -377,7 +378,7 @@ def predict_with_ml(symbol, timeframe, current_data):
         
         # Find best model
         best_model_name = max(performance.keys(), key=lambda x: performance[x]['cv_mean'])
-        best_model_file = os.path.join(ML_MODELS_DIR, f"{symbol}_{timeframe}_{best_model_name}.joblib")
+        best_model_file = os.path.join(ML_MODELS_DIR, f"{safe_symbol}_{timeframe}_{best_model_name}.joblib")
         
         if not os.path.exists(best_model_file):
             logger.warning(f"⚠️ Không tìm thấy file mô hình {best_model_name} cho {symbol}")
@@ -437,7 +438,10 @@ def analyze_convergence(data, lookback_periods=None):
         lookback_periods = CONVERGENCE_LOOKBACK_PERIODS
     
     try:
-        close_prices = data['close']
+        # Convert to pandas Series if it's a numpy array
+        close_prices = pd.Series(data['close']) if not isinstance(data['close'], pd.Series) else data['close']
+        volume_data = pd.Series(data['volume']) if not isinstance(data['volume'], pd.Series) else data['volume']
+        
         convergence_analysis = {
             'overall_convergence': 0.0,
             'period_convergence': {},
@@ -450,8 +454,8 @@ def analyze_convergence(data, lookback_periods=None):
                 continue
             
             # Tính toán các chỉ số cho period này
-            recent_prices = close_prices[-period:]
-            older_prices = close_prices[-period*2:-period]
+            recent_prices = close_prices.iloc[-period:].values
+            older_prices = close_prices.iloc[-period*2:-period].values
             
             # 1. Price Convergence
             recent_std = np.std(recent_prices)
@@ -459,8 +463,8 @@ def analyze_convergence(data, lookback_periods=None):
             price_convergence = 1 - (recent_std / older_std) if older_std > 0 else 0
             
             # 2. Volume Convergence
-            recent_volume = data['volume'][-period:]
-            older_volume = data['volume'][-period*2:-period]
+            recent_volume = volume_data.iloc[-period:].values
+            older_volume = volume_data.iloc[-period*2:-period].values
             recent_vol_std = np.std(recent_volume)
             older_vol_std = np.std(older_volume)
             volume_convergence = 1 - (recent_vol_std / older_vol_std) if older_vol_std > 0 else 0
@@ -477,8 +481,8 @@ def analyze_convergence(data, lookback_periods=None):
             
             # 4. RSI Convergence
             rsi = ta.momentum.rsi(close_prices, window=14)
-            recent_rsi = rsi[-period:]
-            older_rsi = rsi[-period*2:-period]
+            recent_rsi = rsi.iloc[-period:].values
+            older_rsi = rsi.iloc[-period*2:-period].values
             # Remove NaN values
             recent_rsi = recent_rsi[~np.isnan(recent_rsi)]
             older_rsi = older_rsi[~np.isnan(older_rsi)]
@@ -488,8 +492,8 @@ def analyze_convergence(data, lookback_periods=None):
             
             # 5. MACD Convergence
             macd = ta.trend.macd(close_prices)
-            recent_macd = macd[-period:]
-            older_macd = macd[-period*2:-period]
+            recent_macd = macd.iloc[-period:].values
+            older_macd = macd.iloc[-period*2:-period].values
             # Remove NaN values
             recent_macd = recent_macd[~np.isnan(recent_macd)]
             older_macd = older_macd[~np.isnan(older_macd)]
@@ -676,11 +680,8 @@ def get_evaluation_time(timeframe):
 def get_current_price_for_prediction(symbol):
     """Lấy giá hiện tại cho việc cập nhật dự đoán"""
     try:
-        if symbol in ['XAU/USD', 'WTI/USD']:
-            return get_commodity_current_price(symbol)
-        else:
-            ticker = exchange.fetch_ticker(symbol)
-            return ticker['last']
+        ticker = exchange.fetch_ticker(symbol)
+        return ticker['last']
     except Exception as e:
         logger.error(f"❌ Lỗi khi lấy giá hiện tại cho {symbol}: {e}")
         return None
@@ -935,228 +936,14 @@ def send_prediction_accuracy_report():
         logger.error(f"❌ Lỗi khi gửi báo cáo độ chính xác: {e}")
         return False
 
-def fetch_commodity_data(symbol, timeframe, limit):
-    """Lấy dữ liệu hàng hóa từ Yahoo Finance, TradingView và Investing.com"""
-    try:
-        # Thử Yahoo Finance trước (ưu tiên cao nhất)
-        yf_data = fetch_yahoo_finance_data(symbol, timeframe, limit)
-        if yf_data:
-            logger.info(f"✅ Lấy dữ liệu {symbol} từ Yahoo Finance thành công")
-            return yf_data
-        
-        # Thử TradingView nếu Yahoo Finance thất bại
-        tv_data = fetch_tradingview_data(symbol, timeframe, limit)
-        if tv_data:
-            logger.info(f"✅ Lấy dữ liệu {symbol} từ TradingView thành công")
-            return tv_data
-        
-        # Nếu TradingView thất bại, thử Investing.com
-        investing_data = fetch_investing_data(symbol, timeframe, limit)
-        if investing_data:
-            logger.info(f"✅ Lấy dữ liệu {symbol} từ Investing.com thành công")
-            return investing_data
-        
-        logger.error(f"❌ Không thể lấy dữ liệu cho {symbol} từ bất kỳ nguồn nào")
-        return None
-        
-    except Exception as e:
-        logger.error(f"❌ Lỗi khi lấy dữ liệu hàng hóa cho {symbol}: {e}")
-        return None
-
-
-
-def fetch_tradingview_data(symbol, timeframe, limit):
-    """Lấy dữ liệu từ TradingView"""
-    try:
-        tv_symbol = TRADINGVIEW_SYMBOLS.get(symbol)
-        if not tv_symbol:
-            return None
-        
-        # Chuyển đổi timeframe
-        interval_map = {
-            '1h': '1',
-            '2h': '2', 
-            '4h': '4',
-            '6h': '6',
-            '8h': '8',
-            '12h': '12',
-            '1d': '1D',
-            '3d': '3D',
-            '1w': '1W'
-        }
-        
-        interval = interval_map.get(timeframe, '1D')
-        
-        # Sử dụng TradingView API (cần cài đặt tradingview-ta)
-        try:
-            from tradingview_ta import TA_Handler, Interval
-            handler = TA_Handler(
-                symbol=tv_symbol,
-                exchange="OANDA",
-                screener="forex",
-                interval=interval,
-                timeout=10
-            )
-            
-            # Lấy dữ liệu OHLCV
-            analysis = handler.get_analysis()
-            if analysis and hasattr(analysis, 'indicators'):
-                # Tạo dữ liệu giả lập từ indicators
-                # TradingView API chỉ trả về indicators, không phải OHLCV
-                # Nên chúng ta sẽ sử dụng Yahoo Finance thay thế
-                return None
-                
-        except ImportError:
-            logger.warning("TradingView TA library chưa được cài đặt")
-            return None
-            
-    except Exception as e:
-        logger.error(f"Lỗi khi lấy dữ liệu TradingView cho {symbol}: {e}")
-        return None
-
-def fetch_investing_data(symbol, timeframe, limit):
-    """Lấy dữ liệu từ Investing.com"""
-    try:
-        investing_symbol = INVESTING_SYMBOLS.get(symbol)
-        if not investing_symbol:
-            return None
-        
-        # Investing.com không có API công khai, nên chúng ta sẽ sử dụng Yahoo Finance
-        # hoặc web scraping (cần thêm thư viện)
-        return None
-        
-    except Exception as e:
-        logger.error(f"Lỗi khi lấy dữ liệu Investing.com cho {symbol}: {e}")
-        return None
-
-def fetch_yahoo_finance_data(symbol, timeframe, limit):
-    """Lấy dữ liệu từ Yahoo Finance (fallback)"""
-    try:
-        # Map symbols cho Yahoo Finance
-        yf_symbols = {
-            'XAU/USD': 'GC=F',  # Gold Futures
-            'WTI/USD': 'CL=F'   # Crude Oil Futures
-        }
-        
-        yf_symbol = yf_symbols.get(symbol)
-        if not yf_symbol:
-            return None
-        
-        # Chuyển đổi timeframe - sử dụng các interval được Yahoo Finance hỗ trợ
-        period_map = {
-            '1h': '5d',
-            '2h': '5d', 
-            '4h': '5d',
-            '6h': '5d',
-            '8h': '5d',
-            '12h': '5d',
-            '1d': '1mo',
-            '3d': '3mo',
-            '1w': '6mo'
-        }
-        
-        interval_map = {
-            '1h': '1h',
-            '2h': '1h',  # Yahoo Finance không hỗ trợ 2h, dùng 1h
-            '4h': '1h',  # Yahoo Finance không hỗ trợ 4h, dùng 1h
-            '6h': '1h',  # Yahoo Finance không hỗ trợ 6h, dùng 1h
-            '8h': '1h',  # Yahoo Finance không hỗ trợ 8h, dùng 1h
-            '12h': '1h', # Yahoo Finance không hỗ trợ 12h, dùng 1h
-            '1d': '1d',
-            '3d': '1d',  # Yahoo Finance không hỗ trợ 3d, dùng 1d
-            '1w': '1wk'
-        }
-        
-        period = period_map.get(timeframe, '1mo')
-        interval = interval_map.get(timeframe, '1d')
-        
-        # Lấy dữ liệu từ Yahoo Finance
-        ticker = yf.Ticker(yf_symbol)
-        data = ticker.history(period=period, interval=interval)
-        
-        logger.info(f"📊 Yahoo Finance: Lấy {len(data)} dòng dữ liệu cho {symbol} ({period}, {interval})")
-        
-        if data.empty:
-            logger.warning(f"Không có dữ liệu cho {symbol} từ Yahoo Finance")
-            return None
-        
-        # Chuyển đổi sang format OHLCV
-        ohlcv = []
-        for index, row in data.tail(limit).iterrows():
-            ohlcv.append({
-                'timestamp': int(index.timestamp() * 1000),
-                'open': float(row['Open']),
-                'high': float(row['High']), 
-                'low': float(row['Low']),
-                'close': float(row['Close']),
-                'volume': float(row['Volume']) if 'Volume' in row and not np.isnan(row['Volume']) else 1000000.0  # Volume mặc định
-            })
-        
-        return ohlcv
-        
-    except Exception as e:
-        logger.error(f"Lỗi khi lấy dữ liệu Yahoo Finance cho {symbol}: {e}")
-        return None
-
-def get_commodity_current_price(symbol):
-    """Lấy giá hiện tại cho hàng hóa từ Yahoo Finance"""
-    try:
-        # Sử dụng Yahoo Finance
-        yf_symbols = {
-            'XAU/USD': 'GC=F',  # Gold Futures
-            'WTI/USD': 'CL=F'   # Crude Oil Futures
-        }
-        
-        yf_symbol = yf_symbols.get(symbol)
-        if not yf_symbol:
-            return None
-        
-        # Lấy thông tin ticker
-        ticker = yf.Ticker(yf_symbol)
-        info = ticker.info
-        
-        # Lấy giá hiện tại
-        current_price = info.get('regularMarketPrice')
-        if current_price:
-            logger.info(f"✅ Thành công lấy giá {symbol} từ Yahoo Finance: ${current_price}")
-            return current_price
-        
-        # Fallback: lấy từ lịch sử gần nhất
-        data = ticker.history(period='1d')
-        if not data.empty:
-            current_price = data['Close'].iloc[-1]
-            logger.info(f"✅ Thành công lấy giá {symbol} từ lịch sử Yahoo Finance: ${current_price}")
-            return current_price
-        
-        return None
-        
-    except Exception as e:
-        logger.error(f"❌ Lỗi khi lấy giá hiện tại cho {symbol}: {e}")
-        return None
+# Đã loại bỏ tất cả các hàm liên quan đến hàng hóa (vàng, dầu)
 
 def fetch_ohlcv(symbol, timeframe, limit):
-    """Lấy dữ liệu OHLCV cho crypto, vàng và dầu"""
+    """Lấy dữ liệu OHLCV cho crypto"""
     for attempt in range(RETRY_ATTEMPTS):
         try:
-            # Xử lý đặc biệt cho vàng và dầu - sử dụng Yahoo Finance/TradingView/Investing
-            if symbol in ['XAU/USD', 'WTI/USD']:
-                ohlcv = fetch_commodity_data(symbol, timeframe, limit)
-                logger.info(f"🔍 Commodity data for {symbol}: {len(ohlcv) if ohlcv else 0} candles, need {limit * 0.8}")
-                if ohlcv and len(ohlcv) >= limit * 0.8:
-                    logger.info(f"✅ Thành công lấy dữ liệu {symbol} từ Yahoo Finance/TradingView/Investing")
-                    return {
-                        'open': np.array([candle['open'] for candle in ohlcv]),
-                        'high': np.array([candle['high'] for candle in ohlcv]),
-                        'low': np.array([candle['low'] for candle in ohlcv]),
-                        'close': np.array([candle['close'] for candle in ohlcv]),
-                        'volume': np.array([candle['volume'] for candle in ohlcv])
-                    }
-                else:
-                    logger.warning(f"⚠️ Không thể lấy dữ liệu cho {symbol} từ Yahoo Finance/TradingView/Investing")
-                    return None
-            else:
-                # Xử lý bình thường cho crypto
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            # Xử lý cho crypto
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             
             if len(ohlcv) < limit * 0.8:
                 logger.warning(f"⚠️ Dữ liệu OHLCV cho {symbol} ({timeframe}) không đủ: {len(ohlcv)}/{limit}")
@@ -1438,6 +1225,9 @@ def detect_elliott_wave(highs, lows, closes):
 
 def analyze_timeframe(data, timeframe, current_price, symbol=None):
     """Phân tích kỹ thuật tối ưu với 12 chỉ số cốt lõi, ML và phân tích hội tụ"""
+    # Khởi tạo commodity_signals để tránh lỗi NameError
+    commodity_signals = {}
+    
     # Chuyển đổi numpy array sang pandas Series để tương thích với thư viện ta
     close = pd.Series(data['close'])
     high = pd.Series(data['high'])
@@ -1601,38 +1391,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         price_pattern_signal = 'Long'
 
     # === 10. TÍN HIỆU ĐẶC BIỆT CHO HÀNG HÓA ===
-    commodity_signals = {}
-    if symbol in ['XAU/USD', 'WTI/USD']:
-        # Aroon Indicator
-        aroon_up = ta.trend.aroon_up(high, low, window=14)
-        aroon_down = ta.trend.aroon_down(high, low, window=14)
-        aroon_signal = 'Hold'
-        if aroon_up[-1] > 70 and aroon_down[-1] < 30:
-            aroon_signal = 'Long'
-        elif aroon_down[-1] > 70 and aroon_up[-1] < 30:
-            aroon_signal = 'Short'
-        commodity_signals['aroon_signal'] = aroon_signal
-        
-        # Seasonal Analysis
-        current_month = datetime.now().month
-        seasonal_signal = 'Hold'
-        
-        if symbol == 'XAU/USD':  # Vàng
-            bullish_months = [1, 8, 9, 12]
-            bearish_months = [3, 4, 6, 7]
-            if current_month in bullish_months:
-                seasonal_signal = 'Long'
-            elif current_month in bearish_months:
-                seasonal_signal = 'Short'
-        elif symbol == 'WTI/USD':  # Dầu
-            bullish_months = [1, 2, 6, 7, 8, 12]
-            bearish_months = [3, 4, 5, 9, 10, 11]
-            if current_month in bullish_months:
-                seasonal_signal = 'Long'
-            elif current_month in bearish_months:
-                seasonal_signal = 'Short'
-        
-        commodity_signals['seasonal_signal'] = seasonal_signal
+    # Đã loại bỏ code liên quan đến vàng và dầu
 
     # === 11. TẠO DANH SÁCH TÍN HIỆU CƠ BẢN ===
     basic_signals = [
@@ -1642,13 +1401,6 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         smc_signals['order_block_signal'], smc_signals['fvg_signal'], 
         smc_signals['liquidity_signal'], smc_signals['mitigation_signal']
     ]
-    
-    # Thêm tín hiệu hàng hóa
-    if symbol in ['XAU/USD', 'WTI/USD']:
-        basic_signals.extend([
-            commodity_signals.get('aroon_signal', 'Hold'),
-            commodity_signals.get('seasonal_signal', 'Hold')
-        ])
 
     # === 12. XỬ LÝ DIVERGENCE VỚI TRỌNG SỐ CAO ===
     divergence_signal = divergence_consensus['signal']
@@ -1732,13 +1484,17 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     # === 15. MACHINE LEARNING PREDICTION ===
     ml_prediction = None
     try:
-        ml_prediction = predict_with_ml(symbol, timeframe, data)
-        if ml_prediction and ml_prediction['confidence'] > ML_CONFIDENCE_THRESHOLD:
-            # Thêm tín hiệu ML vào danh sách với trọng số cao
-            ml_weight = int(ml_prediction['confidence'] * 5)  # Trọng số dựa trên confidence
-            for _ in range(ml_weight):
-                final_signals.append(ml_prediction['signal'])
-            logger.info(f"🤖 ML {ml_prediction['model_name']}: {ml_prediction['signal']} (Confidence: {ml_prediction['confidence']:.3f})")
+        # Chỉ sử dụng ML cho các timeframe đã được train
+        if timeframe in ML_TIMEFRAMES:
+            ml_prediction = predict_with_ml(symbol, timeframe, data)
+            if ml_prediction and ml_prediction['confidence'] > ML_CONFIDENCE_THRESHOLD:
+                # Thêm tín hiệu ML vào danh sách với trọng số cao
+                ml_weight = int(ml_prediction['confidence'] * 5)  # Trọng số dựa trên confidence
+                for _ in range(ml_weight):
+                    final_signals.append(ml_prediction['signal'])
+                logger.info(f"🤖 ML {ml_prediction['model_name']}: {ml_prediction['signal']} (Confidence: {ml_prediction['confidence']:.3f})")
+        else:
+            logger.debug(f"⏭️ Bỏ qua ML prediction cho {symbol} ({timeframe}) - không có model được train")
     except Exception as e:
         logger.warning(f"⚠️ Lỗi ML prediction cho {symbol}: {e}")
 
@@ -1860,22 +1616,14 @@ def make_decision(analyses):
     return 'Hold', 0, []
 
 def analyze_coin(symbol):
-    """Phân tích xu hướng ngắn hạn cho một coin, vàng hoặc dầu"""
+    """Phân tích xu hướng ngắn hạn cho một coin"""
     try:
         logger.info(f"🔍 Bắt đầu phân tích {symbol}...")
         
-        # Xử lý đặc biệt cho vàng và dầu
-        if symbol in ['XAU/USD', 'WTI/USD']:
-            current_price = get_commodity_current_price(symbol)
-            if current_price is None:
-                logger.error(f"Không thể lấy giá hiện tại cho {symbol}")
-                return None
-            logger.info(f"✅ Đã lấy giá hiện tại cho {symbol}: ${current_price}")
-        else:
-            # Xử lý bình thường cho crypto
-            ticker = exchange.fetch_ticker(symbol)
-            current_price = ticker['last']
-            logger.info(f"✅ Đã lấy giá hiện tại cho {symbol}: ${current_price}")
+        # Lấy giá hiện tại cho crypto
+        ticker = exchange.fetch_ticker(symbol)
+        current_price = ticker['last']
+        logger.info(f"✅ Đã lấy giá hiện tại cho {symbol}: ${current_price}")
     except Exception as e:
         logger.error(f"Lỗi khi lấy giá hiện tại cho {symbol}: {e}")
         return None
@@ -1973,10 +1721,6 @@ def format_coin_report(result):
     
     # Xác định loại tài sản để hiển thị emoji phù hợp
     asset_type = "COIN"
-    if symbol == 'XAU/USD':
-        asset_type = "VÀNG"
-    elif symbol == 'WTI/USD':
-        asset_type = "DẦU"
     
     report = f"🤖 <b>PHÂN TÍCH {asset_type} {symbol}</b>\n"
     report += f"⏰ {current_time} | 📊 Ngưỡng tối thiểu: {SIGNAL_THRESHOLD:.1%}\n\n"
@@ -2254,7 +1998,7 @@ def format_prediction_accuracy_report():
         report += f"💰 <b>THEO TÀI SẢN:</b>\n"
         for symbol, stats in symbol_stats.items():
             if stats['total'] > 0:
-                emoji = "🟡" if symbol == 'XAU/USD' else "🟠" if symbol == 'WTI/USD' else "🟢"
+                emoji = "🟢"
                 report += f"  {emoji} {symbol}: {stats['accuracy']:.1%} ({stats['accurate']}/{stats['total']})\n"
         report += "\n"
     
@@ -3257,8 +3001,8 @@ def get_ml_training_status():
         }
         
         # Kiểm tra models đã train
-        for symbol in ['BTC/USDT', 'ETH/USDT', 'BNB/USDT']:
-            for timeframe in ['1h', '4h', '1d']:
+        for symbol in ['BTC/USDT', 'ETH/USDT']:
+            for timeframe in ML_TIMEFRAMES:
                 model_files = []
                 for model_type in ['random_forest', 'xgboost', 'lightgbm', 'gradient_boosting', 'logistic_regression', 'svm']:
                     safe_symbol = symbol.replace('/', '_')
@@ -3299,32 +3043,30 @@ def main():
         print(f"❌ Models missing: {len(ml_status['models_missing'])}")
         print(f"📁 Data files: {len(ml_status['data_files'])}")
     
-    # Khởi động Telegram Report Scheduler
-    telegram_report_scheduler()
+    # Train ML models một lần (không có scheduler)
+    logger.info("🤖 Bắt đầu train ML models...")
+    symbols_to_train = ['BTC/USDT', 'ETH/USDT']
+    timeframes_to_train = ML_TIMEFRAMES
     
-    # Khởi động Prediction Update Scheduler
-    prediction_update_scheduler()
+    for symbol in symbols_to_train:
+        for timeframe in timeframes_to_train:
+            logger.info(f"🔄 Training ML models cho {symbol} ({timeframe})...")
+            try:
+                train_ml_models(symbol, timeframe)
+                logger.info(f"✅ Đã train thành công cho {symbol} ({timeframe})")
+            except Exception as e:
+                logger.error(f"❌ Lỗi train {symbol} ({timeframe}): {e}")
     
-    # Khởi động ML Model Trainer Scheduler
-    ml_model_trainer_scheduler()
-    
+    # Phân tích các symbols
     symbols = get_usdt_symbols()
     logger.info(f"Đã chọn {len(symbols)} tài sản: {symbols}")
-    logger.info("📊 Bao gồm: Crypto (BTC, ETH, BNB) từ Binance")
-
-    # Phân tích lần đầu (chỉ để kiểm tra kết nối)
+    
     results = []
     for symbol in symbols:
         result = analyze_coin(symbol)
         if result:
             results.append(result)
-            # Hiển thị loại tài sản phù hợp
-            if symbol == 'XAU/USD':
-                logger.info(f"🟡 Đã phân tích Vàng {symbol} thành công")
-            elif symbol == 'WTI/USD':
-                logger.info(f"🟠 Đã phân tích Dầu {symbol} thành công")
-            else:
-                logger.info(f"✅ Đã phân tích {symbol} thành công")
+            logger.info(f"✅ Đã phân tích {symbol} thành công")
 
     # Hiển thị thống kê độ chính xác nếu có
     accuracy_data = get_prediction_accuracy_data()
@@ -3332,18 +3074,18 @@ def main():
         overall = accuracy_data['overall']
         logger.info(f"📈 Thống kê độ chính xác: {overall['accuracy']:.1%} ({overall['accurate_predictions']}/{overall['total_predictions']})")
     
-    logger.info(f"🤖 Bot đang chạy và gửi báo cáo Telegram mỗi {TELEGRAM_REPORT_INTERVAL//3600} giờ...")
-    logger.info(f"📊 Hệ thống theo dõi dự đoán đang hoạt động (cập nhật mỗi {PREDICTION_UPDATE_INTERVAL//3600} giờ)")
-    logger.info(f"🤖 ML Model Trainer đang hoạt động (train mỗi {ML_UPDATE_INTERVAL//3600} giờ)")
-    logger.info(f"🎯 Convergence Analysis đã được kích hoạt")
-    logger.info(f"📱 Nhấn Ctrl+C để dừng bot")
+    # Gửi báo cáo Telegram
+    if results:
+        report = format_analysis_report(results)
+        success = send_telegram_message(report)
+        if success:
+            logger.info("📱 Đã gửi báo cáo Telegram thành công!")
+        else:
+            logger.error("❌ Lỗi gửi báo cáo Telegram")
+    else:
+        logger.info("📊 Không có kết quả phân tích để gửi")
     
-    # Giữ bot chạy để Telegram scheduler hoạt động
-    try:
-        while True:
-            time.sleep(1800)  # Kiểm tra mỗi 30 phút
-    except KeyboardInterrupt:
-        logger.info(f"\n🛑 Bot đã dừng!")
+    logger.info("🏁 Hoàn thành phân tích!")
 
 if __name__ == "__main__":
     main()

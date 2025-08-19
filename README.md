@@ -85,6 +85,8 @@ TELEGRAM_CHAT_ID=your_chat_id
 python script.py
 ```
 
+**Lưu ý:** Script đã được tối ưu để chạy một lần và thoát, không có infinite loops để phù hợp với GitHub Actions.
+
 ## 📊 Cấu trúc hệ thống
 
 ### Thư mục

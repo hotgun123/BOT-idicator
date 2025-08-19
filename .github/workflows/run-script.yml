@@ -5,10 +5,13 @@ on:
     # Chạy cứ 2 giờ một lần (UTC time)
     - cron: '0 */2 * * *'
   workflow_dispatch:  # Cho phép chạy thủ công
+  push:
+    branches: [ main, master ]  # Chạy khi push code mới
 
 jobs:
   analyze-trading:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Timeout sau 30 phút
     
     steps:
     - name: Checkout code
@@ -27,15 +30,26 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
           
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
-        python -m pip install --upgrade pip
+        sudo apt-get update
+        sudo apt-get install -y build-essential libssl-dev libffi-dev python3-dev
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip setuptools wheel
         pip install -r requirements.txt
+        # Cài đặt thêm các dependencies có thể thiếu
+        pip install yfinance tradingview-ta
         
     - name: Create .env file
       run: |
         echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
         echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+        
+    - name: Create necessary directories
+      run: |
+        mkdir -p ml_models ml_data prediction_data
         
     - name: Run trading analysis
       run: |
@@ -43,8 +57,9 @@ jobs:
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        PYTHONPATH: ${{ github.workspace }}
         
-    - name: Upload logs (if failed)
+    - name: Upload logs and data (if failed)
       if: failure()
       uses: actions/upload-artifact@v4
       with:
@@ -52,4 +67,17 @@ jobs:
         path: |
           *.log
           prediction_data/
+          ml_models/
+          ml_data/
         retention-days: 7
+        
+    - name: Upload results (if success)
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: trading-bot-results
+        path: |
+          prediction_data/
+          ml_models/
+          ml_data/
+        retention-days: 1

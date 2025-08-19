@@ -46,17 +46,34 @@ Hệ thống phân tích và dự đoán xu hướng thị trường tự độn
 
 ## 🛠️ Cài đặt
 
-### Yêu cầu hệ thống
+### 🚀 **Option 1: GitHub Actions (Khuyến nghị)**
+Bot sẽ chạy tự động trên GitHub và gửi kết quả về Telegram mà không cần máy tính local.
+
+**Thiết lập:**
+1. Fork repository này về GitHub của bạn
+2. Vào **Settings** → **Secrets and variables** → **Actions**
+3. Thêm 2 secrets:
+   ```
+   TELEGRAM_BOT_TOKEN = 7496162935:AAGncIsO4q18cOWRGpK0vYb_5zWxYNEgWKQ
+   TELEGRAM_CHAT_ID = 1866335373
+   ```
+4. Bot sẽ tự động chạy mỗi 2 giờ và gửi kết quả về Telegram
+
+**Xem hướng dẫn chi tiết:** [GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md)
+
+### 💻 **Option 2: Local Installation**
+
+#### Yêu cầu hệ thống
 - Python 3.8+
 - RAM: 4GB+ (cho ML training)
 - Storage: 2GB+ (cho models và data)
 
-### Cài đặt dependencies
+#### Cài đặt dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### Cấu hình
+#### Cấu hình
 1. Tạo file `.env`:
 ```env
 TELEGRAM_BOT_TOKEN=your_bot_token

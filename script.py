@@ -52,14 +52,54 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Khởi tạo kết nối với Binance mainnet (spot)
+# Khởi tạo kết nối với Binance mainnet (spot) - Sửa lỗi 451
 exchange = ccxt.binance({
     'enableRateLimit': True,
     'options': {
         'defaultType': 'spot',
         'adjustForTimeDifference': True,
+        'recvWindow': 60000,
+    },
+    'headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
 })
+
+# Thử sử dụng Binance Testnet nếu mainnet bị chặn
+def get_exchange():
+    """Lấy exchange với fallback options"""
+    try:
+        # Thử mainnet trước
+        mainnet = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True,
+                'recvWindow': 60000,
+            },
+            'headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        })
+        
+        # Test kết nối
+        mainnet.load_markets()
+        logger.info("✅ Kết nối Binance mainnet thành công")
+        return mainnet
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Không thể kết nối Binance mainnet: {e}")
+        
+        try:
+            # Thử sử dụng yfinance làm fallback
+            logger.info("🔄 Chuyển sang sử dụng yfinance...")
+            return None  # Sẽ xử lý trong get_current_price
+        except Exception as e2:
+            logger.error(f"❌ Không thể kết nối bất kỳ exchange nào: {e2}")
+            return None
+
+# Khởi tạo exchange
+exchange = get_exchange()
 
 # Khởi tạo kết nối với Exness cho hàng hóa (đã loại bỏ)
 exness_exchange = None
@@ -678,12 +718,51 @@ def get_evaluation_time(timeframe):
     return timeframe_hours.get(timeframe, 24) * 3600  # Chuyển sang giây
 
 def get_current_price_for_prediction(symbol):
-    """Lấy giá hiện tại cho việc cập nhật dự đoán"""
+    """Lấy giá hiện tại cho việc cập nhật dự đoán với fallback"""
     try:
-        ticker = exchange.fetch_ticker(symbol)
-        return ticker['last']
+        if exchange:
+            ticker = exchange.fetch_ticker(symbol)
+            return ticker['last']
+        else:
+            # Fallback sử dụng yfinance
+            symbol_mapping = {
+                'BTC/USDT': 'BTC-USD',
+                'ETH/USDT': 'ETH-USD',
+                'BNB/USDT': 'BNB-USD'
+            }
+            
+            yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+            ticker = yf.Ticker(yf_symbol)
+            current_price = ticker.info.get('regularMarketPrice')
+            
+            if current_price:
+                logger.info(f"✅ Lấy giá {symbol} từ yfinance: ${current_price}")
+                return current_price
+            else:
+                logger.error(f"❌ Không thể lấy giá từ yfinance cho {symbol}")
+                return None
+                
     except Exception as e:
         logger.error(f"❌ Lỗi khi lấy giá hiện tại cho {symbol}: {e}")
+        
+        # Thử fallback với yfinance
+        try:
+            symbol_mapping = {
+                'BTC/USDT': 'BTC-USD',
+                'ETH/USDT': 'ETH-USD',
+                'BNB/USDT': 'BNB-USD'
+            }
+            
+            yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+            ticker = yf.Ticker(yf_symbol)
+            current_price = ticker.info.get('regularMarketPrice')
+            
+            if current_price:
+                logger.info(f"✅ Fallback: Lấy giá {symbol} từ yfinance: ${current_price}")
+                return current_price
+        except Exception as e2:
+            logger.error(f"❌ Fallback cũng thất bại cho {symbol}: {e2}")
+        
         return None
 
 def calculate_actual_result(prediction, initial_price, current_price, timeframe):
@@ -939,23 +1018,63 @@ def send_prediction_accuracy_report():
 # Đã loại bỏ tất cả các hàm liên quan đến hàng hóa (vàng, dầu)
 
 def fetch_ohlcv(symbol, timeframe, limit):
-    """Lấy dữ liệu OHLCV cho crypto"""
+    """Lấy dữ liệu OHLCV cho crypto với fallback"""
     for attempt in range(RETRY_ATTEMPTS):
         try:
-            # Xử lý cho crypto
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            
-            if len(ohlcv) < limit * 0.8:
-                logger.warning(f"⚠️ Dữ liệu OHLCV cho {symbol} ({timeframe}) không đủ: {len(ohlcv)}/{limit}")
-                return None
+            if exchange:
+                # Xử lý cho crypto với Binance
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
                 
-            return {
-                'open': np.array([candle[1] for candle in ohlcv]),
-                'high': np.array([candle[2] for candle in ohlcv]),
-                'low': np.array([candle[3] for candle in ohlcv]),
-                'close': np.array([candle[4] for candle in ohlcv]),
-                'volume': np.array([candle[5] for candle in ohlcv])
-            }
+                if len(ohlcv) < limit * 0.8:
+                    logger.warning(f"⚠️ Dữ liệu OHLCV cho {symbol} ({timeframe}) không đủ: {len(ohlcv)}/{limit}")
+                    return None
+                    
+                return {
+                    'open': np.array([candle[1] for candle in ohlcv]),
+                    'high': np.array([candle[2] for candle in ohlcv]),
+                    'low': np.array([candle[3] for candle in ohlcv]),
+                    'close': np.array([candle[4] for candle in ohlcv]),
+                    'volume': np.array([candle[5] for candle in ohlcv])
+                }
+            else:
+                # Fallback sử dụng yfinance
+                symbol_mapping = {
+                    'BTC/USDT': 'BTC-USD',
+                    'ETH/USDT': 'ETH-USD',
+                    'BNB/USDT': 'BNB-USD'
+                }
+                
+                yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+                ticker = yf.Ticker(yf_symbol)
+                
+                # Chuyển đổi timeframe
+                period_mapping = {
+                    '1h': '1h',
+                    '2h': '2h', 
+                    '4h': '4h',
+                    '6h': '6h',
+                    '8h': '8h',
+                    '12h': '12h',
+                    '1d': '1d',
+                    '3d': '3d',
+                    '1w': '1wk'
+                }
+                
+                period = period_mapping.get(timeframe, '1d')
+                history = ticker.history(period=f"{limit}d", interval=period)
+                
+                if len(history) < limit * 0.5:
+                    logger.warning(f"⚠️ Dữ liệu yfinance cho {symbol} ({timeframe}) không đủ: {len(history)}/{limit}")
+                    return None
+                
+                return {
+                    'open': history['Open'].values,
+                    'high': history['High'].values,
+                    'low': history['Low'].values,
+                    'close': history['Close'].values,
+                    'volume': history['Volume'].values
+                }
+                
         except Exception as e:
             error_msg = str(e)
             if "Invalid symbol status" in error_msg or "symbol not found" in error_msg.lower():
@@ -966,6 +1085,32 @@ def fetch_ohlcv(symbol, timeframe, limit):
                 time.sleep(1)
             else:
                 logger.error(f"❌ Không thể lấy dữ liệu OHLCV cho {symbol} ({timeframe}): {error_msg}")
+                
+                # Thử fallback với yfinance
+                try:
+                    symbol_mapping = {
+                        'BTC/USDT': 'BTC-USD',
+                        'ETH/USDT': 'ETH-USD',
+                        'BNB/USDT': 'BNB-USD'
+                    }
+                    
+                    yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+                    ticker = yf.Ticker(yf_symbol)
+                    period = period_mapping.get(timeframe, '1d')
+                    history = ticker.history(period=f"{limit}d", interval=period)
+                    
+                    if len(history) > 0:
+                        logger.info(f"✅ Fallback: Lấy dữ liệu {symbol} từ yfinance")
+                        return {
+                            'open': history['Open'].values,
+                            'high': history['High'].values,
+                            'low': history['Low'].values,
+                            'close': history['Close'].values,
+                            'volume': history['Volume'].values
+                        }
+                except Exception as e2:
+                    logger.error(f"❌ Fallback yfinance cũng thất bại cho {symbol}: {e2}")
+    
     return None
 
 def calculate_fibonacci_levels(highs, lows):
@@ -1620,13 +1765,52 @@ def analyze_coin(symbol):
     try:
         logger.info(f"🔍 Bắt đầu phân tích {symbol}...")
         
-        # Lấy giá hiện tại cho crypto
-        ticker = exchange.fetch_ticker(symbol)
-        current_price = ticker['last']
-        logger.info(f"✅ Đã lấy giá hiện tại cho {symbol}: ${current_price}")
+        # Lấy giá hiện tại cho crypto với fallback
+        if exchange:
+            ticker = exchange.fetch_ticker(symbol)
+            current_price = ticker['last']
+            logger.info(f"✅ Đã lấy giá hiện tại cho {symbol}: ${current_price}")
+        else:
+            # Fallback sử dụng yfinance
+            symbol_mapping = {
+                'BTC/USDT': 'BTC-USD',
+                'ETH/USDT': 'ETH-USD',
+                'BNB/USDT': 'BNB-USD'
+            }
+            
+            yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+            ticker = yf.Ticker(yf_symbol)
+            current_price = ticker.info.get('regularMarketPrice')
+            
+            if current_price:
+                logger.info(f"✅ Fallback: Đã lấy giá hiện tại cho {symbol}: ${current_price}")
+            else:
+                logger.error(f"❌ Không thể lấy giá hiện tại cho {symbol}")
+                return None
+                
     except Exception as e:
         logger.error(f"Lỗi khi lấy giá hiện tại cho {symbol}: {e}")
-        return None
+        
+        # Thử fallback với yfinance
+        try:
+            symbol_mapping = {
+                'BTC/USDT': 'BTC-USD',
+                'ETH/USDT': 'ETH-USD',
+                'BNB/USDT': 'BNB-USD'
+            }
+            
+            yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+            ticker = yf.Ticker(yf_symbol)
+            current_price = ticker.info.get('regularMarketPrice')
+            
+            if current_price:
+                logger.info(f"✅ Fallback: Đã lấy giá hiện tại cho {symbol}: ${current_price}")
+            else:
+                logger.error(f"❌ Fallback cũng thất bại cho {symbol}")
+                return None
+        except Exception as e2:
+            logger.error(f"❌ Fallback cũng thất bại cho {symbol}: {e2}")
+            return None
 
     analyses = []
     for timeframe in TIMEFRAMES:
@@ -2862,24 +3046,55 @@ def calculate_divergence_consensus(divergences):
             return {'signal': 'Hold', 'strength': 0, 'count': 0}
 
 def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
-    """Lấy dữ liệu lịch sử cho ML training từ Binance API"""
+    """Lấy dữ liệu lịch sử cho ML training từ Binance API với fallback"""
     try:
         if limit is None:
             limit = ML_HISTORICAL_CANDLES
             
         logger.info(f"📊 Đang lấy dữ liệu lịch sử cho {symbol} ({timeframe}) - {limit} candles...")
         
-        # Lấy dữ liệu từ Binance
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        
-        if not ohlcv or len(ohlcv) < ML_MIN_SAMPLES:
-            logger.warning(f"⚠️ Không đủ dữ liệu lịch sử cho {symbol} ({timeframe}): {len(ohlcv) if ohlcv else 0} candles")
-            return None
-        
-        # Chuyển đổi thành DataFrame
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
+        if exchange:
+            # Lấy dữ liệu từ Binance
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            
+            if not ohlcv or len(ohlcv) < ML_MIN_SAMPLES:
+                logger.warning(f"⚠️ Không đủ dữ liệu lịch sử cho {symbol} ({timeframe}): {len(ohlcv) if ohlcv else 0} candles")
+                return None
+            
+            # Chuyển đổi thành DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+        else:
+            # Fallback sử dụng yfinance
+            symbol_mapping = {
+                'BTC/USDT': 'BTC-USD',
+                'ETH/USDT': 'ETH-USD',
+                'BNB/USDT': 'BNB-USD'
+            }
+            
+            yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+            ticker = yf.Ticker(yf_symbol)
+            
+            # Chuyển đổi timeframe
+            period_mapping = {
+                '1h': '1h',
+                '2h': '2h', 
+                '4h': '4h',
+                '6h': '6h',
+                '8h': '8h',
+                '12h': '12h',
+                '1d': '1d',
+                '3d': '3d',
+                '1w': '1wk'
+            }
+            
+            period = period_mapping.get(timeframe, '1d')
+            df = ticker.history(period=f"{limit}d", interval=period)
+            
+            if len(df) < ML_MIN_SAMPLES:
+                logger.warning(f"⚠️ Không đủ dữ liệu yfinance cho {symbol} ({timeframe}): {len(df)} candles")
+                return None
         
         # Lưu dữ liệu gốc (thay thế ký tự / bằng _)
         safe_symbol = symbol.replace('/', '_')
@@ -2889,16 +3104,49 @@ def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
         logger.info(f"✅ Đã lấy và lưu {len(df)} candles lịch sử cho {symbol} ({timeframe})")
         
         return {
-            'open': df['open'].values,
-            'high': df['high'].values,
-            'low': df['low'].values,
-            'close': df['close'].values,
-            'volume': df['volume'].values,
+            'open': df['Open'].values if 'Open' in df.columns else df['open'].values,
+            'high': df['High'].values if 'High' in df.columns else df['high'].values,
+            'low': df['Low'].values if 'Low' in df.columns else df['low'].values,
+            'close': df['Close'].values if 'Close' in df.columns else df['close'].values,
+            'volume': df['Volume'].values if 'Volume' in df.columns else df['volume'].values,
             'timestamp': df.index.values
         }
         
     except Exception as e:
         logger.error(f"❌ Lỗi khi lấy dữ liệu lịch sử cho {symbol} ({timeframe}): {e}")
+        
+        # Thử fallback với yfinance
+        try:
+            symbol_mapping = {
+                'BTC/USDT': 'BTC-USD',
+                'ETH/USDT': 'ETH-USD',
+                'BNB/USDT': 'BNB-USD'
+            }
+            
+            yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+            ticker = yf.Ticker(yf_symbol)
+            period = period_mapping.get(timeframe, '1d')
+            df = ticker.history(period=f"{limit}d", interval=period)
+            
+            if len(df) > 0:
+                logger.info(f"✅ Fallback: Lấy dữ liệu lịch sử {symbol} từ yfinance")
+                
+                # Lưu dữ liệu gốc
+                safe_symbol = symbol.replace('/', '_')
+                data_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_historical.csv")
+                df.to_csv(data_file)
+                
+                return {
+                    'open': df['Open'].values,
+                    'high': df['High'].values,
+                    'low': df['Low'].values,
+                    'close': df['Close'].values,
+                    'volume': df['Volume'].values,
+                    'timestamp': df.index.values
+                }
+        except Exception as e2:
+            logger.error(f"❌ Fallback yfinance cũng thất bại cho {symbol}: {e2}")
+        
         return None
 
 def load_or_fetch_historical_data(symbol, timeframe):

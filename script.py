@@ -110,7 +110,7 @@ SYMBOLS = ['BTC/USDT', 'ETH/USDT']  # Bỏ BNB theo yêu cầu của user
 TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
 ML_TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d']  # Timeframes cho ML training
 CANDLE_LIMIT = 200
-SIGNAL_THRESHOLD = 0.6 # Giảm xuống 40% để dễ có tín hiệu hơn
+SIGNAL_THRESHOLD = 0.6 # Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
 RETRY_ATTEMPTS = 2
 
 # Cấu hình Telegram
@@ -142,7 +142,7 @@ CONVERGENCE_THRESHOLD = 0.8  # Ngưỡng hội tụ (0-1)
 CONVERGENCE_WEIGHT = 0.3  # Trọng số cho tín hiệu hội tụ trong consensus
 
 def get_usdt_symbols():
-    """Trả về danh sách cặp giao dịch cố định bao gồm crypto, vàng và dầu"""
+    """Trả về danh sách cặp giao dịch crypto"""
     return SYMBOLS
 
 def ensure_prediction_data_dir():
@@ -1520,6 +1520,16 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         pivot_signal = 'Long'
     elif current_price > pivot_points['r1'] and pivot_distance > 0.01:
         pivot_signal = 'Short'
+    
+    # Support/Resistance Signal
+    sr_signal = 'Hold'
+    support_distance = (current_price - support) / current_price
+    resistance_distance = (resistance - current_price) / current_price
+    
+    if support_distance < 0.01 and current_price > support:  # Gần support
+        sr_signal = 'Long'
+    elif resistance_distance < 0.01 and current_price < resistance:  # Gần resistance
+        sr_signal = 'Short'
 
     # Candlestick Signal
     candlestick_signal = 'Hold'
@@ -1542,15 +1552,66 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     basic_signals = [
         rsi_signal, stoch_signal, macd_signal, ma_signal, adx_signal,
         bb_signal, obv_signal, vwap_signal, atr_signal, pivot_signal,
-        candlestick_signal, price_pattern_signal,
+        candlestick_signal, price_pattern_signal, sr_signal,
         smc_signals['order_block_signal'], smc_signals['fvg_signal'], 
         smc_signals['liquidity_signal'], smc_signals['mitigation_signal']
     ]
+    
+    # Thêm một số tín hiệu cơ bản dựa trên xu hướng giá
+    price_trend_signal = 'Hold'
+    if len(close) >= 5:
+        recent_trend = (close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]
+        if recent_trend > 0.02:  # Tăng > 2%
+            price_trend_signal = 'Long'
+        elif recent_trend < -0.02:  # Giảm > 2%
+            price_trend_signal = 'Short'
+    
+    # Thêm tín hiệu dựa trên volume
+    volume_signal = 'Hold'
+    if len(volume) >= 10:
+        current_volume = volume.iloc[-1]
+        avg_volume = volume.iloc[-10:].mean()
+        if current_volume > avg_volume * 1.5:  # Volume cao
+            if get_last(close) > get_last(ema20):
+                volume_signal = 'Long'
+            else:
+                volume_signal = 'Short'
+    
+    # Thêm các tín hiệu mới vào danh sách
+    basic_signals.extend([price_trend_signal, volume_signal])
+    
+    # Debug logging cho basic signals
+    logger.info(f"🔍 DEBUG {symbol} ({timeframe}) Basic Signals:")
+    logger.info(f"  • RSI: {rsi_signal} ({get_last(rsi):.1f})")
+    logger.info(f"  • Stochastic: {stoch_signal} (K:{get_last(stoch_k):.1f}, D:{get_last(stoch_d):.1f})")
+    logger.info(f"  • MACD: {macd_signal}")
+    logger.info(f"  • MA: {ma_signal}")
+    logger.info(f"  • ADX: {adx_signal} ({get_last(adx):.1f})")
+    logger.info(f"  • BB: {bb_signal}")
+    logger.info(f"  • OBV: {obv_signal}")
+    logger.info(f"  • VWAP: {vwap_signal}")
+    logger.info(f"  • ATR: {atr_signal}")
+    logger.info(f"  • Pivot: {pivot_signal}")
+    logger.info(f"  • Candlestick: {candlestick_signal}")
+    logger.info(f"  • Pattern: {price_pattern_signal}")
+    logger.info(f"  • Support/Resistance: {sr_signal}")
+    logger.info(f"  • SMC Order Block: {smc_signals['order_block_signal']}")
+    logger.info(f"  • SMC FVG: {smc_signals['fvg_signal']}")
+    logger.info(f"  • SMC Liquidity: {smc_signals['liquidity_signal']}")
+    logger.info(f"  • SMC Mitigation: {smc_signals['mitigation_signal']}")
+    logger.info(f"  • Price Trend: {price_trend_signal}")
+    logger.info(f"  • Volume: {volume_signal}")
 
     # === 12. XỬ LÝ DIVERGENCE VỚI TRỌNG SỐ CAO ===
     divergence_signal = divergence_consensus['signal']
     divergence_strength = divergence_consensus['strength']
     divergence_count = divergence_consensus['count']
+    
+    # Debug logging cho divergence
+    logger.info(f"🔍 DEBUG {symbol} ({timeframe}) Divergence:")
+    logger.info(f"  • Signal: {divergence_signal}")
+    logger.info(f"  • Strength: {divergence_strength:.3f}")
+    logger.info(f"  • Count: {divergence_count}")
     
     # Tạo danh sách tín hiệu cuối cùng với trọng số divergence
     final_signals = basic_signals.copy()
@@ -1567,6 +1628,10 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             # Thêm thêm 5 lần nữa cho divergence rất mạnh
             for _ in range(5):
                 final_signals.append(divergence_signal)
+        
+        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Added {divergence_weight} divergence signals")
+    else:
+        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): No divergence signals added")
 
     # === 13. TÍN HIỆU CỰC MẠNH (EXTRA WEIGHT) ===
     extra_signals = []
@@ -1576,57 +1641,66 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         extra_signals.extend(['Long', 'Long', 'Long'])
     elif get_last(rsi) > 80:
         extra_signals.extend(['Short', 'Short', 'Short'])
+        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): RSI cực mạnh Short (RSI={get_last(rsi):.1f})")
     
     # Stochastic cực mạnh
     if get_last(stoch_k) < 10:
         extra_signals.extend(['Long', 'Long', 'Long'])
     elif get_last(stoch_k) > 90:
         extra_signals.extend(['Short', 'Short', 'Short'])
+        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Stochastic cực mạnh Short (K={get_last(stoch_k):.1f})")
     
     # Bollinger Bands breakout mạnh
     if current_price < get_last(bb_lower) * 0.985:
         extra_signals.extend(['Long', 'Long', 'Long'])
+        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): BB breakout Long (price={current_price:.4f}, bb_lower={get_last(bb_lower):.4f})")
     elif current_price > get_last(bb_upper) * 1.015:
         extra_signals.extend(['Short', 'Short', 'Short'])
+        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): BB breakout Short (price={current_price:.4f}, bb_upper={get_last(bb_upper):.4f})")
     
     # MACD crossover mạnh
     try:
         if (get_last(macd_line) > get_last(macd_signal) * 1.2 and 
             get_last_n(macd_line, 2)[0] <= get_last_n(macd_signal, 2)[0]):
             extra_signals.extend(['Long', 'Long', 'Long'])
+            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): MACD crossover mạnh Long")
         elif (get_last(macd_line) < get_last(macd_signal) * 0.8 and 
               get_last_n(macd_line, 2)[0] >= get_last_n(macd_signal, 2)[0]):
             extra_signals.extend(['Short', 'Short', 'Short'])
+            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): MACD crossover mạnh Short")
     except:
         pass
-
-    # === 14. TÍNH TOÁN CONSENSUS CUỐI CÙNG ===
-    all_signals = final_signals + extra_signals
     
-    long_count = all_signals.count('Long')
-    short_count = all_signals.count('Short')
-    hold_count = all_signals.count('Hold')
+    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Extra signals count = {len(extra_signals)}")
     
-    total_signals = len(all_signals)
+    # Thêm một số tín hiệu extra dựa trên điều kiện thị trường
+    market_condition_signals = []
     
-    if total_signals == 0:
-        consensus = 'Hold'
-        confidence = 0.0
-    else:
-        if long_count > short_count:
-            consensus = 'Long'
-            confidence = long_count / total_signals
-        elif short_count > long_count:
-            consensus = 'Short'
-            confidence = short_count / total_signals
+    # Tín hiệu dựa trên volatility
+    if get_last(atr) > np.mean([atr.iloc[i] for i in range(-10, 0)]) * 1.2:
+        if get_last(close) > get_last(ema20):
+            market_condition_signals.extend(['Long', 'Long'])
         else:
-            consensus = 'Hold'
-            confidence = 0.5
+            market_condition_signals.extend(['Short', 'Short'])
+        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): High volatility signal added")
+    
+    # Tín hiệu dựa trên momentum
+    if len(close) >= 3:
+        momentum = (close.iloc[-1] - close.iloc[-3]) / close.iloc[-3]
+        if abs(momentum) > 0.03:  # Momentum > 3%
+            if momentum > 0:
+                market_condition_signals.extend(['Long', 'Long'])
+            else:
+                market_condition_signals.extend(['Short', 'Short'])
+            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Strong momentum signal added (momentum={momentum:.3f})")
+    
+    extra_signals.extend(market_condition_signals)
+    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Total extra signals after market conditions = {len(extra_signals)}")
 
     # === 15. TÍNH TOÁN ĐIỂM ENTRY ===
     entry_points = calculate_entry_points(current_price, high, low, close, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance)
 
-    # === 15. MACHINE LEARNING PREDICTION ===
+    # === 16. MACHINE LEARNING PREDICTION ===
     ml_prediction = None
     try:
         # Chỉ sử dụng ML cho các timeframe đã được train
@@ -1638,12 +1712,15 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
                 for _ in range(ml_weight):
                     final_signals.append(ml_prediction['signal'])
                 logger.info(f"🤖 ML {ml_prediction['model_name']}: {ml_prediction['signal']} (Confidence: {ml_prediction['confidence']:.3f})")
+                logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Added {ml_weight} ML signals")
+            else:
+                logger.info(f"🔍 DEBUG {symbol} ({timeframe}): ML prediction below threshold or None")
         else:
             logger.debug(f"⏭️ Bỏ qua ML prediction cho {symbol} ({timeframe}) - không có model được train")
     except Exception as e:
         logger.warning(f"⚠️ Lỗi ML prediction cho {symbol}: {e}")
 
-    # === 16. PHÂN TÍCH HỘI TỤ (CONVERGENCE ANALYSIS) ===
+    # === 17. PHÂN TÍCH HỘI TỤ (CONVERGENCE ANALYSIS) ===
     convergence_analysis = None
     try:
         convergence_analysis = analyze_convergence(data)
@@ -1654,10 +1731,13 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
                 for _ in range(convergence_weight):
                     final_signals.append(signal_info['signal'])
             logger.info(f"🎯 Convergence Analysis: {convergence_analysis['overall_convergence']:.3f} - {len(convergence_analysis['signals'])} signals")
+            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Added {convergence_weight * len(convergence_analysis['signals'])} convergence signals")
+        else:
+            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Convergence analysis below threshold or None")
     except Exception as e:
         logger.warning(f"⚠️ Lỗi convergence analysis cho {symbol}: {e}")
 
-    # === 17. TÍNH TOÁN CONSENSUS CUỐI CÙNG (CẬP NHẬT) ===
+    # === 18. TÍNH TOÁN CONSENSUS CUỐI CÙNG ===
     all_signals = final_signals + extra_signals
     
     long_count = all_signals.count('Long')
@@ -1665,6 +1745,17 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     hold_count = all_signals.count('Hold')
     
     total_signals = len(all_signals)
+    
+    # Debug logging
+    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Long={long_count}, Short={short_count}, Hold={hold_count}, Total={total_signals}")
+    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Final signals count={len(final_signals)}, Extra signals count={len(extra_signals)}")
+    
+    # Debug: Hiển thị chi tiết các tín hiệu
+    if len(all_signals) > 0:
+        signal_counts = {}
+        for signal in all_signals:
+            signal_counts[signal] = signal_counts.get(signal, 0) + 1
+        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Signal breakdown = {signal_counts}")
     
     if total_signals == 0:
         consensus = 'Hold'
@@ -1679,8 +1770,10 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         else:
             consensus = 'Hold'
             confidence = 0.5
+    
+    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Final consensus={consensus}, confidence={confidence:.3f}")
 
-    # === 18. TRẢ VỀ KẾT QUẢ TỐI ƯU ===
+    # === 19. TRẢ VỀ KẾT QUẢ TỐI ƯU ===
     return {
         'trend': 'bullish' if consensus == 'Long' else 'bearish' if consensus == 'Short' else 'neutral',
         'signal': consensus,
@@ -1741,23 +1834,43 @@ def make_decision(analyses):
     """Tổng hợp nhận định từ các khung thời gian
     
     Logic:
-    - SIGNAL_THRESHOLD (50%): Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
+    - SIGNAL_THRESHOLD (60%): Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
     - consensus_ratio: Tỷ lệ đồng thuận thực tế của timeframe có tín hiệu mạnh nhất
     - Chỉ những timeframe có consensus_ratio >= SIGNAL_THRESHOLD mới được xét
     """
     valid_timeframes = []
+    
+    # Debug logging
+    logger.info(f"🔍 DEBUG make_decision: SIGNAL_THRESHOLD={SIGNAL_THRESHOLD}")
+    logger.info(f"🔍 DEBUG make_decision: Analyzing {len(analyses)} timeframes")
+    
     for analysis in analyses:
-        if analysis['signal'] in ['Long', 'Short'] and analysis['consensus_ratio'] >= SIGNAL_THRESHOLD:
+        signal = analysis.get('signal', 'Hold')
+        consensus_ratio = analysis.get('consensus_ratio', 0)
+        timeframe = analysis.get('timeframe', 'unknown')
+        
+        logger.info(f"🔍 DEBUG make_decision: {timeframe} - signal={signal}, consensus_ratio={consensus_ratio:.3f}")
+        
+        if signal in ['Long', 'Short'] and consensus_ratio >= SIGNAL_THRESHOLD:
             valid_timeframes.append(analysis)
+            logger.info(f"✅ DEBUG make_decision: {timeframe} is VALID (signal={signal}, ratio={consensus_ratio:.3f})")
+        else:
+            logger.info(f"❌ DEBUG make_decision: {timeframe} is INVALID (signal={signal}, ratio={consensus_ratio:.3f})")
+    
+    logger.info(f"🔍 DEBUG make_decision: Found {len(valid_timeframes)} valid timeframes")
     
     if valid_timeframes:
         signals = [a['signal'] for a in valid_timeframes]
         has_long = 'Long' in signals
         has_short = 'Short' in signals
         if has_long and has_short:
+            logger.info("🔍 DEBUG make_decision: Mixed signals detected")
             return 'Mixed', 0, valid_timeframes
         best_analysis = max(valid_timeframes, key=lambda x: x['consensus_ratio'])
+        logger.info(f"🔍 DEBUG make_decision: Best analysis = {best_analysis['timeframe']} ({best_analysis['signal']}, {best_analysis['consensus_ratio']:.3f})")
         return best_analysis['signal'], best_analysis['consensus_ratio'], valid_timeframes
+    
+    logger.info("🔍 DEBUG make_decision: No valid timeframes found, returning Hold")
     return 'Hold', 0, []
 
 def analyze_coin(symbol):
@@ -1834,6 +1947,14 @@ def analyze_coin(symbol):
 
     decision, consensus_ratio, valid_timeframes = make_decision(analyses)
 
+    # Debug logging cho kết quả cuối cùng
+    logger.info(f"🔍 DEBUG {symbol} FINAL RESULT:")
+    logger.info(f"  • Decision: {decision}")
+    logger.info(f"  • Consensus Ratio: {consensus_ratio:.3f}")
+    logger.info(f"  • Valid Timeframes: {len(valid_timeframes)}")
+    for tf in valid_timeframes:
+        logger.info(f"    - {tf['timeframe']}: {tf['signal']} ({tf['consensus_ratio']:.3f})")
+
     # Tạo kết quả phân tích
     result = {
         'symbol': symbol,
@@ -1906,7 +2027,7 @@ def send_telegram_message(message):
         return False
 
 def format_coin_report(result):
-    """Định dạng báo cáo phân tích cho một đồng coin, vàng hoặc dầu cụ thể - Tối ưu cho tín hiệu mạnh"""
+    """Định dạng báo cáo phân tích cho một đồng coin cụ thể - Tối ưu cho tín hiệu mạnh"""
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     symbol = result['symbol']
     decision = result['decision']
@@ -1977,15 +2098,7 @@ def format_coin_report(result):
                 if pa['pattern_signal'] != 'Hold':
                     strong_signals.append("Price Action")
             
-            # Chỉ báo hàng hóa mạnh (cho vàng và dầu)
-            if 'commodity_signals' in analysis and analysis['commodity_signals']:
-                commodity = analysis['commodity_signals']
-                if commodity.get('aroon_signal') != 'Hold':
-                    strong_signals.append("Aroon")
-                if commodity.get('csi_signal') != 'Hold':
-                    strong_signals.append("CSI")
-                if commodity.get('seasonal_signal') != 'Hold':
-                    strong_signals.append("Seasonal")
+            # Chỉ báo hàng hóa (đã loại bỏ - chỉ phân tích crypto)
             
             # Hiển thị tín hiệu mạnh (tối đa 5 tín hiệu quan trọng nhất)
             if strong_signals:
@@ -2021,7 +2134,7 @@ def format_analysis_report(results):
     report = f"🤖 <b>BÁO CÁO PHÂN TÍCH XU HƯỚNG TỐI ƯU</b>\n"
     report += f"⏰ Thời gian: {current_time}\n"
     report += f"📊 Ngưỡng tối thiểu: {SIGNAL_THRESHOLD:.1%}{accuracy_summary}\n"
-    report += f"💰 Tài sản: Crypto, Vàng, Dầu\n"
+    report += f"💰 Tài sản: Crypto\n"
     report += f"🎯 <b>12 CHỈ SỐ CỐT LÕI + ML + CONVERGENCE ANALYSIS</b>\n\n"
     
     if not results:
@@ -2042,6 +2155,16 @@ def format_analysis_report(results):
             emoji = "✅" if decision == 'Long' else "🔴"
             report += f"{emoji} <b>{symbol}: {decision}</b> (Độ tin cậy: {consensus_ratio:.1%})\n"
             report += f"📊 Timeframes: {', '.join([a['timeframe'] for a in valid_timeframes])}\n"
+            
+            # Hiển thị tổng số tín hiệu Long/Short
+            total_long = 0
+            total_short = 0
+            for analysis in valid_timeframes:
+                signal_counts = analysis.get('signal_counts', {})
+                total_long += signal_counts.get('long', 0)
+                total_short += signal_counts.get('short', 0)
+            
+            report += f"📈 Tổng tín hiệu Long: {total_long} | 📉 Tổng tín hiệu Short: {total_short}\n"
             
             # Thêm thông tin chi tiết cho từng timeframe
             for analysis in valid_timeframes:
@@ -2090,32 +2213,87 @@ def format_analysis_report(results):
                 signals = analysis.get('signals', {})
                 indicators = analysis.get('indicators', {})
                 
-                # Trend Indicators
-                report += f"📈 <b>TREND:</b>\n"
-                report += f"  • MA: {signals.get('ma', 'Hold')} (EMA20: {indicators.get('ema20', 0):.4f})\n"
-                report += f"  • ADX: {signals.get('adx', 'Hold')} ({indicators.get('adx', 0):.1f})\n"
+                # Phân loại các chỉ báo theo tín hiệu
+                long_signals = []
+                short_signals = []
+                hold_signals = []
                 
-                # Momentum Indicators
-                report += f"📊 <b>MOMENTUM:</b>\n"
-                report += f"  • RSI: {signals.get('rsi', 'Hold')} ({indicators.get('rsi', 0):.1f})\n"
-                report += f"  • Stochastic: {signals.get('stoch', 'Hold')} (K: {indicators.get('stoch_k', 0):.1f})\n"
-                report += f"  • MACD: {signals.get('macd', 'Hold')} ({indicators.get('macd_line', 0):.4f})\n"
+                for signal_name, signal_value in signals.items():
+                    if signal_value == 'Long':
+                        long_signals.append(signal_name.upper())
+                    elif signal_value == 'Short':
+                        short_signals.append(signal_name.upper())
+                    else:
+                        hold_signals.append(signal_name.upper())
                 
-                # Volatility Indicators
-                report += f"📉 <b>VOLATILITY:</b>\n"
-                report += f"  • Bollinger Bands: {signals.get('bb', 'Hold')}\n"
-                report += f"  • ATR: {signals.get('atr', 'Hold')} ({indicators.get('atr', 0):.4f})\n"
+                # Hiển thị các chỉ báo Long
+                if long_signals:
+                    report += f"🟢 <b>CHỈ BÁO LONG:</b>\n"
+                    for signal in long_signals:
+                        if signal == 'RSI':
+                            report += f"  • RSI: {indicators.get('rsi', 0):.1f}\n"
+                        elif signal == 'STOCH':
+                            report += f"  • Stochastic: K={indicators.get('stoch_k', 0):.1f}, D={indicators.get('stoch_d', 0):.1f}\n"
+                        elif signal == 'MACD':
+                            report += f"  • MACD: {indicators.get('macd_line', 0):.4f}\n"
+                        elif signal == 'MA':
+                            report += f"  • MA: EMA20={indicators.get('ema20', 0):.4f}, EMA50={indicators.get('ema50', 0):.4f}\n"
+                        elif signal == 'ADX':
+                            report += f"  • ADX: {indicators.get('adx', 0):.1f}\n"
+                        elif signal == 'BB':
+                            report += f"  • BB: Price near lower band\n"
+                        elif signal == 'OBV':
+                            report += f"  • OBV: {indicators.get('obv', 0):.0f}\n"
+                        elif signal == 'VWAP':
+                            report += f"  • VWAP: {indicators.get('vwap', 0):.4f}\n"
+                        elif signal == 'ATR':
+                            report += f"  • ATR: {indicators.get('atr', 0):.4f}\n"
+                        elif signal == 'PIVOT':
+                            report += f"  • Pivot: Near support\n"
+                        else:
+                            report += f"  • {signal}\n"
+                    report += "\n"
                 
-                # Volume Indicators
-                report += f"💰 <b>VOLUME:</b>\n"
-                report += f"  • OBV: {signals.get('obv', 'Hold')}\n"
-                report += f"  • VWAP: {signals.get('vwap', 'Hold')} ({indicators.get('vwap', 0):.4f})\n"
+                # Hiển thị các chỉ báo Short
+                if short_signals:
+                    report += f"🔴 <b>CHỈ BÁO SHORT:</b>\n"
+                    for signal in short_signals:
+                        if signal == 'RSI':
+                            report += f"  • RSI: {indicators.get('rsi', 0):.1f}\n"
+                        elif signal == 'STOCH':
+                            report += f"  • Stochastic: K={indicators.get('stoch_k', 0):.1f}, D={indicators.get('stoch_d', 0):.1f}\n"
+                        elif signal == 'MACD':
+                            report += f"  • MACD: {indicators.get('macd_line', 0):.4f}\n"
+                        elif signal == 'MA':
+                            report += f"  • MA: EMA20={indicators.get('ema20', 0):.4f}, EMA50={indicators.get('ema50', 0):.4f}\n"
+                        elif signal == 'ADX':
+                            report += f"  • ADX: {indicators.get('adx', 0):.1f}\n"
+                        elif signal == 'BB':
+                            report += f"  • BB: Price near upper band\n"
+                        elif signal == 'OBV':
+                            report += f"  • OBV: {indicators.get('obv', 0):.0f}\n"
+                        elif signal == 'VWAP':
+                            report += f"  • VWAP: {indicators.get('vwap', 0):.4f}\n"
+                        elif signal == 'ATR':
+                            report += f"  • ATR: {indicators.get('atr', 0):.4f}\n"
+                        elif signal == 'PIVOT':
+                            report += f"  • Pivot: Near resistance\n"
+                        else:
+                            report += f"  • {signal}\n"
+                    report += "\n"
                 
-                # Support/Resistance
-                report += f"🎯 <b>SUPPORT/RESISTANCE:</b>\n"
-                report += f"  • Pivot: {signals.get('pivot', 'Hold')}\n"
-                report += f"  • Support: {indicators.get('support', 0):.4f}\n"
-                report += f"  • Resistance: {indicators.get('resistance', 0):.4f}\n"
+                # Hiển thị các chỉ báo Hold (nếu có)
+                if hold_signals and len(hold_signals) > 0:
+                    report += f"⚪ <b>CHỈ BÁO TRUNG LẬP:</b> {', '.join(hold_signals)}\n\n"
+                
+                # Hiển thị thông tin về tín hiệu extra và market conditions
+                signal_counts = analysis.get('signal_counts', {})
+                if signal_counts:
+                    report += f"📊 <b>PHÂN TÍCH TÍN HIỆU:</b>\n"
+                    report += f"  • Tổng tín hiệu: {signal_counts.get('total', 0)}\n"
+                    report += f"  • Long: {signal_counts.get('long', 0)} ({signal_counts.get('long', 0)/signal_counts.get('total', 1)*100:.1f}%)\n"
+                    report += f"  • Short: {signal_counts.get('short', 0)} ({signal_counts.get('short', 0)/signal_counts.get('total', 1)*100:.1f}%)\n"
+                    report += f"  • Hold: {signal_counts.get('hold', 0)} ({signal_counts.get('hold', 0)/signal_counts.get('total', 1)*100:.1f}%)\n\n"
                 
                 # Patterns
                 if analysis.get('price_pattern') != 'None':
@@ -2132,13 +2310,7 @@ def format_analysis_report(results):
                         if smc_signal != 'Hold':
                             report += f"  • {smc_type}: {smc_signal}\n"
                 
-                # Commodity Signals (cho vàng và dầu)
-                commodity_signals = analysis.get('commodity_signals', {})
-                if commodity_signals:
-                    report += f"🏆 <b>CHỈ SỐ HÀNG HÓA:</b>\n"
-                    for comm_type, comm_signal in commodity_signals.items():
-                        if comm_signal != 'Hold':
-                            report += f"  • {comm_type}: {comm_signal}\n"
+                # Commodity Signals (đã loại bỏ - chỉ phân tích crypto)
                 
                 # Signal Counts
                 signal_counts = analysis.get('signal_counts', {})
@@ -3325,6 +3497,17 @@ def main():
         if result:
             results.append(result)
             logger.info(f"✅ Đã phân tích {symbol} thành công")
+        else:
+            logger.warning(f"⚠️ Không thể phân tích {symbol}")
+
+    # Debug logging tổng quan
+    logger.info(f"🔍 DEBUG TỔNG QUAN:")
+    logger.info(f"  • Tổng số symbols: {len(symbols)}")
+    logger.info(f"  • Số kết quả thành công: {len(results)}")
+    logger.info(f"  • SIGNAL_THRESHOLD: {SIGNAL_THRESHOLD}")
+    
+    for result in results:
+        logger.info(f"  • {result['symbol']}: {result['decision']} (ratio={result['consensus_ratio']:.3f}, valid_tfs={len(result['valid_timeframes'])})")
 
     # Hiển thị thống kê độ chính xác nếu có
     accuracy_data = get_prediction_accuracy_data()
@@ -3343,6 +3526,10 @@ def main():
     # Gửi báo cáo Telegram
     logger.info(f"🔍 DEBUG: Có {len(results)} kết quả để gửi")
     if results:
+        # Debug: Kiểm tra từng kết quả trước khi format
+        for result in results:
+            logger.info(f"🔍 DEBUG REPORT: {result['symbol']} = {result['decision']} (ratio={result['consensus_ratio']:.3f})")
+        
         report = format_analysis_report(results)
         logger.info(f"🔍 DEBUG: Report length = {len(report)} characters")
         logger.info(f"🔍 DEBUG: Report preview = {report[:200]}...")
@@ -3353,6 +3540,9 @@ def main():
             logger.error("❌ Lỗi gửi báo cáo Telegram")
     else:
         logger.info("📊 Không có kết quả phân tích để gửi")
+        # Gửi thông báo không có tín hiệu
+        no_signal_report = "🤖 <b>BÁO CÁO PHÂN TÍCH</b>\n\n📊 Không có tín hiệu mạnh nào được phát hiện trong thị trường hiện tại.\n\n💡 Điều này có thể do:\n• Thị trường đang sideway/consolidation\n• Các chỉ số chưa đạt ngưỡng tín hiệu\n• Cần chờ thêm thời gian để có tín hiệu rõ ràng\n\n⏰ Thời gian: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        send_telegram_message(no_signal_report)
     
     logger.info("🏁 Hoàn thành phân tích!")
 

@@ -110,7 +110,7 @@ SYMBOLS = ['BTC/USDT', 'ETH/USDT']  # Bỏ BNB theo yêu cầu của user
 TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
 ML_TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d']  # Timeframes cho ML training
 CANDLE_LIMIT = 200
-SIGNAL_THRESHOLD = 0.6 # Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
+SIGNAL_THRESHOLD = 0.3 # Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
 RETRY_ATTEMPTS = 2
 
 # Cấu hình Telegram
@@ -727,8 +727,7 @@ def get_current_price_for_prediction(symbol):
             # Fallback sử dụng yfinance
             symbol_mapping = {
                 'BTC/USDT': 'BTC-USD',
-                'ETH/USDT': 'ETH-USD',
-                'BNB/USDT': 'BNB-USD'
+                'ETH/USDT': 'ETH-USD'
             }
             
             yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
@@ -736,7 +735,6 @@ def get_current_price_for_prediction(symbol):
             current_price = ticker.info.get('regularMarketPrice')
             
             if current_price:
-                logger.info(f"✅ Lấy giá {symbol} từ yfinance: ${current_price}")
                 return current_price
             else:
                 logger.error(f"❌ Không thể lấy giá từ yfinance cho {symbol}")
@@ -749,8 +747,7 @@ def get_current_price_for_prediction(symbol):
         try:
             symbol_mapping = {
                 'BTC/USDT': 'BTC-USD',
-                'ETH/USDT': 'ETH-USD',
-                'BNB/USDT': 'BNB-USD'
+                'ETH/USDT': 'ETH-USD'
             }
             
             yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
@@ -758,7 +755,6 @@ def get_current_price_for_prediction(symbol):
             current_price = ticker.info.get('regularMarketPrice')
             
             if current_price:
-                logger.info(f"✅ Fallback: Lấy giá {symbol} từ yfinance: ${current_price}")
                 return current_price
         except Exception as e2:
             logger.error(f"❌ Fallback cũng thất bại cho {symbol}: {e2}")
@@ -1040,8 +1036,7 @@ def fetch_ohlcv(symbol, timeframe, limit):
                 # Fallback sử dụng yfinance
                 symbol_mapping = {
                     'BTC/USDT': 'BTC-USD',
-                    'ETH/USDT': 'ETH-USD',
-                    'BNB/USDT': 'BNB-USD'
+                    'ETH/USDT': 'ETH-USD'
                 }
                 
                 yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
@@ -1090,8 +1085,7 @@ def fetch_ohlcv(symbol, timeframe, limit):
                 try:
                     symbol_mapping = {
                         'BTC/USDT': 'BTC-USD',
-                        'ETH/USDT': 'ETH-USD',
-                        'BNB/USDT': 'BNB-USD'
+                        'ETH/USDT': 'ETH-USD'
                     }
                     
                     yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
@@ -1100,7 +1094,6 @@ def fetch_ohlcv(symbol, timeframe, limit):
                     history = ticker.history(period=f"{limit}d", interval=period)
                     
                     if len(history) > 0:
-                        logger.info(f"✅ Fallback: Lấy dữ liệu {symbol} từ yfinance")
                         return {
                             'open': history['Open'].values,
                             'high': history['High'].values,
@@ -1127,11 +1120,123 @@ def calculate_fibonacci_levels(highs, lows):
     return levels
 
 def find_support_resistance(highs, lows, current_price):
-    """Tìm mức hỗ trợ/kháng cự gần nhất"""
-    fib_levels = calculate_fibonacci_levels(highs, lows)
-    support = min([price for price in fib_levels.values() if price < current_price], default=min(lows[-20:]))
-    resistance = max([price for price in fib_levels.values() if price > current_price], default=max(highs[-20:]))
-    return support, resistance
+    """Tìm mức hỗ trợ/kháng cự gần nhất với phân tích nâng cao"""
+    try:
+        # Chuyển đổi sang pandas Series nếu cần
+        if not isinstance(highs, pd.Series):
+            highs = pd.Series(highs)
+        if not isinstance(lows, pd.Series):
+            lows = pd.Series(lows)
+        
+        # 1. Fibonacci Retracement Levels
+        fib_levels = calculate_fibonacci_levels(highs, lows)
+        
+        # 2. Pivot Points
+        pivot_points = calculate_pivot_points(highs, lows, pd.Series([current_price]))
+        
+        # 3. Dynamic Support/Resistance từ Swing Highs/Lows
+        swing_levels = find_swing_levels(highs, lows)
+        
+        # 4. Volume Weighted Support/Resistance
+        volume_levels = find_volume_weighted_levels(highs, lows, pd.Series([current_price]))
+        
+        # 5. Psychological Levels (round numbers)
+        psychological_levels = find_psychological_levels(current_price)
+        
+        # 6. Historical Support/Resistance từ các đỉnh/đáy quan trọng
+        historical_levels = find_historical_levels(highs, lows, current_price)
+        
+        # Tổng hợp tất cả các mức
+        all_support_levels = []
+        all_resistance_levels = []
+        
+        # Thêm Fibonacci levels
+        for level_name, price in fib_levels.items():
+            if price < current_price:
+                all_support_levels.append(('Fibonacci', price, level_name, 0.8))
+            else:
+                all_resistance_levels.append(('Fibonacci', price, level_name, 0.8))
+        
+        # Thêm Pivot Points
+        for level_name, price in pivot_points.items():
+            if price < current_price:
+                all_support_levels.append(('Pivot', price, level_name, 0.9))
+            else:
+                all_resistance_levels.append(('Pivot', price, level_name, 0.9))
+        
+        # Thêm Swing Levels
+        for level in swing_levels:
+            if level['type'] == 'support' and level['price'] < current_price:
+                all_support_levels.append(('Swing', level['price'], f"Swing Low {level['strength']:.2f}", level['strength']))
+            elif level['type'] == 'resistance' and level['price'] > current_price:
+                all_resistance_levels.append(('Swing', level['price'], f"Swing High {level['strength']:.2f}", level['strength']))
+        
+        # Thêm Volume Levels
+        for level in volume_levels:
+            if level['type'] == 'support' and level['price'] < current_price:
+                all_support_levels.append(('Volume', level['price'], f"Volume {level['strength']:.2f}", level['strength']))
+            elif level['type'] == 'resistance' and level['price'] > current_price:
+                all_resistance_levels.append(('Volume', level['price'], f"Volume {level['strength']:.2f}", level['strength']))
+        
+        # Thêm Psychological Levels
+        for level in psychological_levels:
+            if level < current_price:
+                all_support_levels.append(('Psychological', level, 'Round Number', 0.7))
+            else:
+                all_resistance_levels.append(('Psychological', level, 'Round Number', 0.7))
+        
+        # Thêm Historical Levels
+        for level in historical_levels:
+            if level['type'] == 'support' and level['price'] < current_price:
+                all_support_levels.append(('Historical', level['price'], f"Historical {level['touches']} touches", level['strength']))
+            elif level['type'] == 'resistance' and level['price'] > current_price:
+                all_resistance_levels.append(('Historical', level['price'], f"Historical {level['touches']} touches", level['strength']))
+        
+        # Sắp xếp theo khoảng cách và strength
+        all_support_levels.sort(key=lambda x: (current_price - x[1], -x[3]))
+        all_resistance_levels.sort(key=lambda x: (x[1] - current_price, -x[3]))
+        
+        # Lấy mức gần nhất và mạnh nhất
+        nearest_support = all_support_levels[0] if all_support_levels else (None, min(lows[-20:]), 'Fallback', 0.5)
+        nearest_resistance = all_resistance_levels[0] if all_resistance_levels else (None, max(highs[-20:]), 'Fallback', 0.5)
+        
+        # Tạo kết quả chi tiết
+        support_resistance_analysis = {
+            'nearest_support': {
+                'type': nearest_support[0],
+                'timeframe': nearest_support[0],
+                'price': nearest_support[1],
+                'description': nearest_support[2],
+                'strength': nearest_support[3],
+                'distance': current_price - nearest_support[1] if nearest_support[1] else 0
+            },
+            'nearest_resistance': {
+                'type': nearest_resistance[0],
+                'timeframe': nearest_resistance[0],
+                'price': nearest_resistance[1],
+                'description': nearest_resistance[2],
+                'strength': nearest_resistance[3],
+                'distance': nearest_resistance[1] - current_price if nearest_resistance[1] else 0
+            },
+            'all_support_levels': all_support_levels[:5],  # Top 5
+            'all_resistance_levels': all_resistance_levels[:5],  # Top 5
+            'fibonacci_levels': fib_levels,
+            'pivot_points': pivot_points,
+            'swing_levels': swing_levels,
+            'volume_levels': volume_levels,
+            'psychological_levels': psychological_levels,
+            'historical_levels': historical_levels
+        }
+        
+        return nearest_support[1], nearest_resistance[1], support_resistance_analysis
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi tìm support/resistance: {e}")
+        # Fallback
+        fib_levels = calculate_fibonacci_levels(highs, lows)
+        support = min([price for price in fib_levels.values() if price < current_price], default=min(lows[-20:]))
+        resistance = max([price for price in fib_levels.values() if price > current_price], default=max(highs[-20:]))
+        return support, resistance, None
 
 def calculate_pivot_points(highs, lows, closes):
     """Tính các mức Pivot Points (Classic)"""
@@ -1146,6 +1251,333 @@ def calculate_pivot_points(highs, lows, closes):
     r3 = high + 2 * (pivot - low)
     s3 = low - 2 * (high - pivot)
     return {'pivot': pivot, 'r1': r1, 's1': s1, 'r2': r2, 's2': s2, 'r3': r3, 's3': s3}
+
+def find_swing_levels(highs, lows, window=20):
+    """Tìm các mức Swing High và Swing Low"""
+    try:
+        swing_levels = []
+        
+        # Tìm Swing Highs
+        for i in range(window, len(highs) - window):
+            if all(highs.iloc[i] > highs.iloc[j] for j in range(i-window, i)) and \
+               all(highs.iloc[i] > highs.iloc[j] for j in range(i+1, i+window+1)):
+                
+                # Tính strength dựa trên độ cao và volume
+                height = highs.iloc[i] - min(lows.iloc[i-window:i+window])
+                strength = min(1.0, height / highs.iloc[i] * 10)  # Normalize strength
+                
+                swing_levels.append({
+                    'type': 'resistance',
+                    'price': highs.iloc[i],
+                    'position': i,
+                    'strength': strength,
+                    'height': height
+                })
+        
+        # Tìm Swing Lows
+        for i in range(window, len(lows) - window):
+            if all(lows.iloc[i] < lows.iloc[j] for j in range(i-window, i)) and \
+               all(lows.iloc[i] < lows.iloc[j] for j in range(i+1, i+window+1)):
+                
+                # Tính strength dựa trên độ sâu và volume
+                depth = max(highs.iloc[i-window:i+window]) - lows.iloc[i]
+                strength = min(1.0, depth / lows.iloc[i] * 10)  # Normalize strength
+                
+                swing_levels.append({
+                    'type': 'support',
+                    'price': lows.iloc[i],
+                    'position': i,
+                    'strength': strength,
+                    'depth': depth
+                })
+        
+        # Sắp xếp theo strength
+        swing_levels.sort(key=lambda x: x['strength'], reverse=True)
+        
+        return swing_levels[:10]  # Trả về top 10 swing levels
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi tìm swing levels: {e}")
+        return []
+
+def find_volume_weighted_levels(highs, lows, closes, window=50):
+    """Tìm các mức support/resistance dựa trên volume"""
+    try:
+        volume_levels = []
+        
+        # Tạo price bins
+        price_range = max(highs[-window:]) - min(lows[-window:])
+        bin_size = price_range / 20  # 20 bins
+        
+        # Tính volume cho từng bin
+        volume_bins = {}
+        for i in range(len(highs[-window:])):
+            price = (highs.iloc[-window+i] + lows.iloc[-window+i]) / 2
+            bin_index = int((price - min(lows[-window:])) / bin_size)
+            bin_price = min(lows[-window:]) + bin_index * bin_size
+            
+            if bin_price not in volume_bins:
+                volume_bins[bin_price] = 0
+            volume_bins[bin_price] += 1  # Sử dụng count thay vì volume thực
+        
+        # Tìm các bin có volume cao
+        avg_volume = np.mean(list(volume_bins.values()))
+        high_volume_bins = [(price, vol) for price, vol in volume_bins.items() if vol > avg_volume * 1.5]
+        
+        # Chuyển đổi thành support/resistance levels
+        for price, volume in high_volume_bins:
+            if price < closes.iloc[-1]:  # Support
+                volume_levels.append({
+                    'type': 'support',
+                    'price': price,
+                    'strength': min(1.0, volume / avg_volume / 2),
+                    'volume_ratio': volume / avg_volume
+                })
+            else:  # Resistance
+                volume_levels.append({
+                    'type': 'resistance',
+                    'price': price,
+                    'strength': min(1.0, volume / avg_volume / 2),
+                    'volume_ratio': volume / avg_volume
+                })
+        
+        # Sắp xếp theo strength
+        volume_levels.sort(key=lambda x: x['strength'], reverse=True)
+        
+        return volume_levels[:10]  # Trả về top 10 volume levels
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi tìm volume levels: {e}")
+        return []
+
+def find_psychological_levels(current_price):
+    """Tìm các mức tâm lý (round numbers)"""
+    try:
+        psychological_levels = []
+        
+        # Xác định scale dựa trên giá hiện tại
+        if current_price >= 1000:  # BTC, ETH
+            scale = 1000
+            base_levels = [1000, 2000, 5000, 10000, 20000, 50000, 100000]
+        elif current_price >= 100:  # Altcoins
+            scale = 100
+            base_levels = [100, 200, 500, 1000, 2000, 5000]
+        elif current_price >= 10:
+            scale = 10
+            base_levels = [10, 20, 50, 100, 200, 500]
+        else:
+            scale = 1
+            base_levels = [1, 2, 5, 10, 20, 50]
+        
+        # Tìm các mức gần nhất
+        for base in base_levels:
+            level = base * scale
+            if abs(level - current_price) / current_price < 0.5:  # Trong vòng 50%
+                psychological_levels.append(level)
+        
+        # Thêm các mức 0.5, 0.25, 0.75
+        for multiplier in [0.25, 0.5, 0.75]:
+            for base in base_levels:
+                level = base * scale * multiplier
+                if abs(level - current_price) / current_price < 0.5:
+                    psychological_levels.append(level)
+        
+        return sorted(list(set(psychological_levels)))  # Loại bỏ duplicates
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi tìm psychological levels: {e}")
+        return []
+
+def find_historical_levels(highs, lows, current_price, lookback=100):
+    """Tìm các mức support/resistance lịch sử quan trọng"""
+    try:
+        historical_levels = []
+        
+        # Tìm các đỉnh và đáy quan trọng
+        peaks = []
+        troughs = []
+        
+        for i in range(1, len(highs[-lookback:]) - 1):
+            if highs.iloc[-lookback+i] > highs.iloc[-lookback+i-1] and \
+               highs.iloc[-lookback+i] > highs.iloc[-lookback+i+1]:
+                peaks.append(highs.iloc[-lookback+i])
+            
+            if lows.iloc[-lookback+i] < lows.iloc[-lookback+i-1] and \
+               lows.iloc[-lookback+i] < lows.iloc[-lookback+i+1]:
+                troughs.append(lows.iloc[-lookback+i])
+        
+        # Nhóm các mức gần nhau (cluster analysis)
+        def cluster_levels(levels, tolerance=0.02):
+            if not levels:
+                return []
+            
+            clusters = []
+            sorted_levels = sorted(levels)
+            
+            current_cluster = [sorted_levels[0]]
+            for level in sorted_levels[1:]:
+                if abs(level - current_cluster[-1]) / current_cluster[-1] < tolerance:
+                    current_cluster.append(level)
+                else:
+                    # Tính trung bình của cluster
+                    avg_level = np.mean(current_cluster)
+                    clusters.append({
+                        'price': avg_level,
+                        'touches': len(current_cluster),
+                        'strength': min(1.0, len(current_cluster) / 5)  # Normalize strength
+                    })
+                    current_cluster = [level]
+            
+            # Xử lý cluster cuối cùng
+            if current_cluster:
+                avg_level = np.mean(current_cluster)
+                clusters.append({
+                    'price': avg_level,
+                    'touches': len(current_cluster),
+                    'strength': min(1.0, len(current_cluster) / 5)
+                })
+            
+            return clusters
+        
+        # Tạo clusters cho peaks và troughs
+        resistance_clusters = cluster_levels(peaks)
+        support_clusters = cluster_levels(troughs)
+        
+        # Thêm vào historical levels
+        for cluster in resistance_clusters:
+            if cluster['price'] > current_price:
+                historical_levels.append({
+                    'type': 'resistance',
+                    'price': cluster['price'],
+                    'touches': cluster['touches'],
+                    'strength': cluster['strength']
+                })
+        
+        for cluster in support_clusters:
+            if cluster['price'] < current_price:
+                historical_levels.append({
+                    'type': 'support',
+                    'price': cluster['price'],
+                    'touches': cluster['touches'],
+                    'strength': cluster['strength']
+                })
+        
+        # Sắp xếp theo strength và số lần chạm
+        historical_levels.sort(key=lambda x: (x['strength'], x['touches']), reverse=True)
+        
+        return historical_levels[:15]  # Trả về top 15 historical levels
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi tìm historical levels: {e}")
+        return []
+
+def analyze_support_resistance_strength(support_resistance_analysis, current_price):
+    """Phân tích độ mạnh của các mức support/resistance"""
+    try:
+        if not support_resistance_analysis:
+            return None
+        
+        analysis = {
+            'support_analysis': {},
+            'resistance_analysis': {},
+            'breakout_potential': {},
+            'consolidation_zones': [],
+            'recommendations': []
+        }
+        
+        # Phân tích Support
+        support = support_resistance_analysis['nearest_support']
+        if support and support['price']:
+            support_distance = support['distance']
+            support_strength = support['strength']
+            
+            if support_distance < current_price * 0.01:  # < 1%
+                analysis['support_analysis']['status'] = 'Very Close'
+                analysis['support_analysis']['risk'] = 'High - Price near support'
+                analysis['support_analysis']['action'] = 'Watch for bounce or breakdown'
+            elif support_distance < current_price * 0.05:  # < 5%
+                analysis['support_analysis']['status'] = 'Close'
+                analysis['support_analysis']['risk'] = 'Medium - Price approaching support'
+                analysis['support_analysis']['action'] = 'Prepare for potential bounce'
+            else:
+                analysis['support_analysis']['status'] = 'Safe Distance'
+                analysis['support_analysis']['risk'] = 'Low - Price far from support'
+                analysis['support_analysis']['action'] = 'Support not immediate concern'
+            
+            analysis['support_analysis']['strength'] = support_strength
+            analysis['support_analysis']['type'] = support['type']
+            analysis['support_analysis']['description'] = support['description']
+        
+        # Phân tích Resistance
+        resistance = support_resistance_analysis['nearest_resistance']
+        if resistance and resistance['price']:
+            resistance_distance = resistance['distance']
+            resistance_strength = resistance['strength']
+            
+            if resistance_distance < current_price * 0.01:  # < 1%
+                analysis['resistance_analysis']['status'] = 'Very Close'
+                analysis['resistance_analysis']['risk'] = 'High - Price near resistance'
+                analysis['resistance_analysis']['action'] = 'Watch for breakout or rejection'
+            elif resistance_distance < current_price * 0.05:  # < 5%
+                analysis['resistance_analysis']['status'] = 'Close'
+                analysis['resistance_analysis']['risk'] = 'Medium - Price approaching resistance'
+                analysis['resistance_analysis']['action'] = 'Prepare for potential breakout'
+            else:
+                analysis['resistance_analysis']['status'] = 'Safe Distance'
+                analysis['resistance_analysis']['risk'] = 'Low - Price far from resistance'
+                analysis['resistance_analysis']['action'] = 'Resistance not immediate concern'
+            
+            analysis['resistance_analysis']['strength'] = resistance_strength
+            analysis['resistance_analysis']['type'] = resistance['type']
+            analysis['resistance_analysis']['description'] = resistance['description']
+        
+        # Phân tích tiềm năng breakout
+        if support and resistance:
+            range_size = resistance['price'] - support['price']
+            current_position = (current_price - support['price']) / range_size
+            
+            if current_position < 0.2:  # Gần support
+                analysis['breakout_potential']['direction'] = 'Downside'
+                analysis['breakout_potential']['probability'] = 'Medium-High'
+                analysis['breakout_potential']['target'] = support['price'] * 0.95
+                analysis['recommendations'].append('Watch for support breakdown - prepare for short')
+            elif current_position > 0.8:  # Gần resistance
+                analysis['breakout_potential']['direction'] = 'Upside'
+                analysis['breakout_potential']['probability'] = 'Medium-High'
+                analysis['breakout_potential']['target'] = resistance['price'] * 1.05
+                analysis['recommendations'].append('Watch for resistance breakout - prepare for long')
+            else:  # Ở giữa range
+                analysis['breakout_potential']['direction'] = 'Sideways'
+                analysis['breakout_potential']['probability'] = 'Low'
+                analysis['breakout_potential']['target'] = 'Range bound trading'
+                analysis['recommendations'].append('Range bound market - trade between support/resistance')
+        
+        # Tìm các vùng consolidation
+        if support and resistance:
+            consolidation_range = {
+                'support': support['price'],
+                'resistance': resistance['price'],
+                'range_size': resistance['price'] - support['price'],
+                'range_percentage': (resistance['price'] - support['price']) / current_price * 100
+            }
+            analysis['consolidation_zones'].append(consolidation_range)
+        
+        # Thêm recommendations dựa trên strength
+        if support and support['strength'] > 0.8:
+            analysis['recommendations'].append(f'Strong support at ${support["price"]:.4f} - High probability bounce')
+        elif support and support['strength'] < 0.4:
+            analysis['recommendations'].append(f'Weak support at ${support["price"]:.4f} - Low probability bounce')
+        
+        if resistance and resistance['strength'] > 0.8:
+            analysis['recommendations'].append(f'Strong resistance at ${resistance["price"]:.4f} - High probability rejection')
+        elif resistance and resistance['strength'] < 0.4:
+            analysis['recommendations'].append(f'Weak resistance at ${resistance["price"]:.4f} - Low probability rejection')
+        
+        return analysis
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi phân tích support/resistance strength: {e}")
+        return None
 
 def calculate_volume_profile(highs, lows, volumes, bins=10):
     """Tính Volume Profile đơn giản (phân bố khối lượng theo mức giá)"""
@@ -1415,7 +1847,10 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
 
     # === 5. SUPPORT/RESISTANCE (2 chỉ số cốt lõi) ===
     pivot_points = calculate_pivot_points(high, low, close)
-    support, resistance = find_support_resistance(high, low, current_price)
+    support, resistance, support_resistance_analysis = find_support_resistance(high, low, current_price)
+    
+    # Phân tích độ mạnh của support/resistance
+    sr_strength_analysis = analyze_support_resistance_strength(support_resistance_analysis, current_price)
 
     # === 6. MÔ HÌNH GIÁ VÀ NẾN ===
     price_pattern = detect_price_patterns(high, low, close)
@@ -1581,26 +2016,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     basic_signals.extend([price_trend_signal, volume_signal])
     
     # Debug logging cho basic signals
-    logger.info(f"🔍 DEBUG {symbol} ({timeframe}) Basic Signals:")
-    logger.info(f"  • RSI: {rsi_signal} ({get_last(rsi):.1f})")
-    logger.info(f"  • Stochastic: {stoch_signal} (K:{get_last(stoch_k):.1f}, D:{get_last(stoch_d):.1f})")
-    logger.info(f"  • MACD: {macd_signal}")
-    logger.info(f"  • MA: {ma_signal}")
-    logger.info(f"  • ADX: {adx_signal} ({get_last(adx):.1f})")
-    logger.info(f"  • BB: {bb_signal}")
-    logger.info(f"  • OBV: {obv_signal}")
-    logger.info(f"  • VWAP: {vwap_signal}")
-    logger.info(f"  • ATR: {atr_signal}")
-    logger.info(f"  • Pivot: {pivot_signal}")
-    logger.info(f"  • Candlestick: {candlestick_signal}")
-    logger.info(f"  • Pattern: {price_pattern_signal}")
-    logger.info(f"  • Support/Resistance: {sr_signal}")
-    logger.info(f"  • SMC Order Block: {smc_signals['order_block_signal']}")
-    logger.info(f"  • SMC FVG: {smc_signals['fvg_signal']}")
-    logger.info(f"  • SMC Liquidity: {smc_signals['liquidity_signal']}")
-    logger.info(f"  • SMC Mitigation: {smc_signals['mitigation_signal']}")
-    logger.info(f"  • Price Trend: {price_trend_signal}")
-    logger.info(f"  • Volume: {volume_signal}")
+    
 
     # === 12. XỬ LÝ DIVERGENCE VỚI TRỌNG SỐ CAO ===
     divergence_signal = divergence_consensus['signal']
@@ -1608,10 +2024,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     divergence_count = divergence_consensus['count']
     
     # Debug logging cho divergence
-    logger.info(f"🔍 DEBUG {symbol} ({timeframe}) Divergence:")
-    logger.info(f"  • Signal: {divergence_signal}")
-    logger.info(f"  • Strength: {divergence_strength:.3f}")
-    logger.info(f"  • Count: {divergence_count}")
+    
     
     # Tạo danh sách tín hiệu cuối cùng với trọng số divergence
     final_signals = basic_signals.copy()
@@ -1629,9 +2042,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             for _ in range(5):
                 final_signals.append(divergence_signal)
         
-        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Added {divergence_weight} divergence signals")
-    else:
-        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): No divergence signals added")
+
 
     # === 13. TÍN HIỆU CỰC MẠNH (EXTRA WEIGHT) ===
     extra_signals = []
@@ -1641,37 +2052,37 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         extra_signals.extend(['Long', 'Long', 'Long'])
     elif get_last(rsi) > 80:
         extra_signals.extend(['Short', 'Short', 'Short'])
-        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): RSI cực mạnh Short (RSI={get_last(rsi):.1f})")
+
     
     # Stochastic cực mạnh
     if get_last(stoch_k) < 10:
         extra_signals.extend(['Long', 'Long', 'Long'])
     elif get_last(stoch_k) > 90:
         extra_signals.extend(['Short', 'Short', 'Short'])
-        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Stochastic cực mạnh Short (K={get_last(stoch_k):.1f})")
+
     
     # Bollinger Bands breakout mạnh
     if current_price < get_last(bb_lower) * 0.985:
         extra_signals.extend(['Long', 'Long', 'Long'])
-        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): BB breakout Long (price={current_price:.4f}, bb_lower={get_last(bb_lower):.4f})")
+
     elif current_price > get_last(bb_upper) * 1.015:
         extra_signals.extend(['Short', 'Short', 'Short'])
-        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): BB breakout Short (price={current_price:.4f}, bb_upper={get_last(bb_upper):.4f})")
+
     
     # MACD crossover mạnh
     try:
         if (get_last(macd_line) > get_last(macd_signal) * 1.2 and 
             get_last_n(macd_line, 2)[0] <= get_last_n(macd_signal, 2)[0]):
             extra_signals.extend(['Long', 'Long', 'Long'])
-            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): MACD crossover mạnh Long")
+
         elif (get_last(macd_line) < get_last(macd_signal) * 0.8 and 
               get_last_n(macd_line, 2)[0] >= get_last_n(macd_signal, 2)[0]):
             extra_signals.extend(['Short', 'Short', 'Short'])
-            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): MACD crossover mạnh Short")
+
     except:
         pass
     
-    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Extra signals count = {len(extra_signals)}")
+
     
     # Thêm một số tín hiệu extra dựa trên điều kiện thị trường
     market_condition_signals = []
@@ -1682,7 +2093,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             market_condition_signals.extend(['Long', 'Long'])
         else:
             market_condition_signals.extend(['Short', 'Short'])
-        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): High volatility signal added")
+
     
     # Tín hiệu dựa trên momentum
     if len(close) >= 3:
@@ -1692,13 +2103,13 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
                 market_condition_signals.extend(['Long', 'Long'])
             else:
                 market_condition_signals.extend(['Short', 'Short'])
-            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Strong momentum signal added (momentum={momentum:.3f})")
+
     
     extra_signals.extend(market_condition_signals)
-    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Total extra signals after market conditions = {len(extra_signals)}")
+
 
     # === 15. TÍNH TOÁN ĐIỂM ENTRY ===
-    entry_points = calculate_entry_points(current_price, high, low, close, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance)
+    entry_points = calculate_entry_points(current_price, high, low, close, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance, support_resistance_analysis)
 
     # === 16. MACHINE LEARNING PREDICTION ===
     ml_prediction = None
@@ -1712,9 +2123,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
                 for _ in range(ml_weight):
                     final_signals.append(ml_prediction['signal'])
                 logger.info(f"🤖 ML {ml_prediction['model_name']}: {ml_prediction['signal']} (Confidence: {ml_prediction['confidence']:.3f})")
-                logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Added {ml_weight} ML signals")
-            else:
-                logger.info(f"🔍 DEBUG {symbol} ({timeframe}): ML prediction below threshold or None")
+
         else:
             logger.debug(f"⏭️ Bỏ qua ML prediction cho {symbol} ({timeframe}) - không có model được train")
     except Exception as e:
@@ -1731,9 +2140,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
                 for _ in range(convergence_weight):
                     final_signals.append(signal_info['signal'])
             logger.info(f"🎯 Convergence Analysis: {convergence_analysis['overall_convergence']:.3f} - {len(convergence_analysis['signals'])} signals")
-            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Added {convergence_weight * len(convergence_analysis['signals'])} convergence signals")
-        else:
-            logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Convergence analysis below threshold or None")
+
     except Exception as e:
         logger.warning(f"⚠️ Lỗi convergence analysis cho {symbol}: {e}")
 
@@ -1746,16 +2153,14 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     
     total_signals = len(all_signals)
     
-    # Debug logging
-    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Long={long_count}, Short={short_count}, Hold={hold_count}, Total={total_signals}")
-    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Final signals count={len(final_signals)}, Extra signals count={len(extra_signals)}")
+
     
     # Debug: Hiển thị chi tiết các tín hiệu
     if len(all_signals) > 0:
         signal_counts = {}
         for signal in all_signals:
             signal_counts[signal] = signal_counts.get(signal, 0) + 1
-        logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Signal breakdown = {signal_counts}")
+
     
     if total_signals == 0:
         consensus = 'Hold'
@@ -1771,7 +2176,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             consensus = 'Hold'
             confidence = 0.5
     
-    logger.info(f"🔍 DEBUG {symbol} ({timeframe}): Final consensus={consensus}, confidence={confidence:.3f}")
+
 
     # === 19. TRẢ VỀ KẾT QUẢ TỐI ƯU ===
     return {
@@ -1799,6 +2204,8 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             'support': support,
             'resistance': resistance
         },
+        'support_resistance_analysis': support_resistance_analysis,
+        'sr_strength_analysis': sr_strength_analysis,
         'signals': {
             'rsi': rsi_signal,
             'stoch': stoch_signal,
@@ -1834,43 +2241,32 @@ def make_decision(analyses):
     """Tổng hợp nhận định từ các khung thời gian
     
     Logic:
-    - SIGNAL_THRESHOLD (60%): Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
+    - SIGNAL_THRESHOLD (30%): Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
     - consensus_ratio: Tỷ lệ đồng thuận thực tế của timeframe có tín hiệu mạnh nhất
     - Chỉ những timeframe có consensus_ratio >= SIGNAL_THRESHOLD mới được xét
     """
     valid_timeframes = []
     
     # Debug logging
-    logger.info(f"🔍 DEBUG make_decision: SIGNAL_THRESHOLD={SIGNAL_THRESHOLD}")
-    logger.info(f"🔍 DEBUG make_decision: Analyzing {len(analyses)} timeframes")
+
     
     for analysis in analyses:
         signal = analysis.get('signal', 'Hold')
         consensus_ratio = analysis.get('consensus_ratio', 0)
         timeframe = analysis.get('timeframe', 'unknown')
         
-        logger.info(f"🔍 DEBUG make_decision: {timeframe} - signal={signal}, consensus_ratio={consensus_ratio:.3f}")
-        
         if signal in ['Long', 'Short'] and consensus_ratio >= SIGNAL_THRESHOLD:
             valid_timeframes.append(analysis)
-            logger.info(f"✅ DEBUG make_decision: {timeframe} is VALID (signal={signal}, ratio={consensus_ratio:.3f})")
-        else:
-            logger.info(f"❌ DEBUG make_decision: {timeframe} is INVALID (signal={signal}, ratio={consensus_ratio:.3f})")
-    
-    logger.info(f"🔍 DEBUG make_decision: Found {len(valid_timeframes)} valid timeframes")
     
     if valid_timeframes:
         signals = [a['signal'] for a in valid_timeframes]
         has_long = 'Long' in signals
         has_short = 'Short' in signals
         if has_long and has_short:
-            logger.info("🔍 DEBUG make_decision: Mixed signals detected")
             return 'Mixed', 0, valid_timeframes
         best_analysis = max(valid_timeframes, key=lambda x: x['consensus_ratio'])
-        logger.info(f"🔍 DEBUG make_decision: Best analysis = {best_analysis['timeframe']} ({best_analysis['signal']}, {best_analysis['consensus_ratio']:.3f})")
         return best_analysis['signal'], best_analysis['consensus_ratio'], valid_timeframes
     
-    logger.info("🔍 DEBUG make_decision: No valid timeframes found, returning Hold")
     return 'Hold', 0, []
 
 def analyze_coin(symbol):
@@ -1882,23 +2278,18 @@ def analyze_coin(symbol):
         if exchange:
             ticker = exchange.fetch_ticker(symbol)
             current_price = ticker['last']
-            logger.info(f"✅ Đã lấy giá hiện tại cho {symbol}: ${current_price}")
         else:
             # Fallback sử dụng yfinance
             symbol_mapping = {
                 'BTC/USDT': 'BTC-USD',
-                'ETH/USDT': 'ETH-USD',
-                'BNB/USDT': 'BNB-USD'
+                'ETH/USDT': 'ETH-USD'
             }
             
             yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
             ticker = yf.Ticker(yf_symbol)
             current_price = ticker.info.get('regularMarketPrice')
             
-            if current_price:
-                logger.info(f"✅ Fallback: Đã lấy giá hiện tại cho {symbol}: ${current_price}")
-            else:
-                logger.error(f"❌ Không thể lấy giá hiện tại cho {symbol}")
+            if not current_price:
                 return None
                 
     except Exception as e:
@@ -1908,18 +2299,14 @@ def analyze_coin(symbol):
         try:
             symbol_mapping = {
                 'BTC/USDT': 'BTC-USD',
-                'ETH/USDT': 'ETH-USD',
-                'BNB/USDT': 'BNB-USD'
+                'ETH/USDT': 'ETH-USD'
             }
             
             yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
             ticker = yf.Ticker(yf_symbol)
             current_price = ticker.info.get('regularMarketPrice')
             
-            if current_price:
-                logger.info(f"✅ Fallback: Đã lấy giá hiện tại cho {symbol}: ${current_price}")
-            else:
-                logger.error(f"❌ Fallback cũng thất bại cho {symbol}")
+            if not current_price:
                 return None
         except Exception as e2:
             logger.error(f"❌ Fallback cũng thất bại cho {symbol}: {e2}")
@@ -1927,18 +2314,12 @@ def analyze_coin(symbol):
 
     analyses = []
     for timeframe in TIMEFRAMES:
-        logger.info(f"📊 Đang lấy dữ liệu {symbol} cho timeframe {timeframe}...")
         data = fetch_ohlcv(symbol, timeframe, CANDLE_LIMIT)
         if data is None:
-            logger.warning(f"❌ Không thể lấy dữ liệu cho {symbol} ({timeframe})")
             continue
-        logger.info(f"✅ Đã lấy dữ liệu {symbol} ({timeframe}): {len(data['close'])} candles")
         
         analysis = analyze_timeframe(data, timeframe, current_price, symbol)
-        
-        # Điều chỉnh phân tích dựa trên độ chính xác lịch sử
         analysis = adjust_analysis_based_on_accuracy(analysis, symbol, timeframe)
-        
         analyses.append(analysis)
 
     if not analyses:
@@ -1947,13 +2328,7 @@ def analyze_coin(symbol):
 
     decision, consensus_ratio, valid_timeframes = make_decision(analyses)
 
-    # Debug logging cho kết quả cuối cùng
-    logger.info(f"🔍 DEBUG {symbol} FINAL RESULT:")
-    logger.info(f"  • Decision: {decision}")
-    logger.info(f"  • Consensus Ratio: {consensus_ratio:.3f}")
-    logger.info(f"  • Valid Timeframes: {len(valid_timeframes)}")
-    for tf in valid_timeframes:
-        logger.info(f"    - {tf['timeframe']}: {tf['signal']} ({tf['consensus_ratio']:.3f})")
+
 
     # Tạo kết quả phân tích
     result = {
@@ -1986,17 +2361,13 @@ def analyze_coin(symbol):
             }
             
             # Lưu dự đoán
-            prediction_id = save_prediction(symbol, analysis['timeframe'], prediction_data, current_price)
-            if prediction_id:
-                logger.info(f"📝 Đã lưu dự đoán {prediction_id} cho {symbol} ({analysis['timeframe']})")
+            save_prediction(symbol, analysis['timeframe'], prediction_data, current_price)
 
     return result
 
 def send_telegram_message(message):
     """Gửi tin nhắn qua Telegram Bot"""
-    logger.info(f"🔍 DEBUG: Bắt đầu gửi Telegram message")
-    logger.info(f"🔍 DEBUG: TELEGRAM_BOT_TOKEN = {TELEGRAM_BOT_TOKEN[:10]}...")
-    logger.info(f"🔍 DEBUG: TELEGRAM_CHAT_ID = {TELEGRAM_CHAT_ID}")
+    
     
     if TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE" or TELEGRAM_CHAT_ID == "YOUR_CHAT_ID_HERE":
         logger.warning("Chưa cấu hình Telegram Bot Token hoặc Chat ID")
@@ -2009,12 +2380,10 @@ def send_telegram_message(message):
             'text': message,
             'parse_mode': 'HTML'
         }
-        logger.info(f"🔍 DEBUG: Gửi request đến {url}")
-        logger.info(f"🔍 DEBUG: Data = {data}")
+
         
         response = requests.post(url, data=data, timeout=10)
-        logger.info(f"🔍 DEBUG: Response status = {response.status_code}")
-        logger.info(f"🔍 DEBUG: Response text = {response.text}")
+
         
         if response.status_code == 200:
             logger.info("✅ Đã gửi báo cáo qua Telegram thành công")
@@ -2166,48 +2535,27 @@ def format_analysis_report(results):
             
             report += f"📈 Tổng tín hiệu Long: {total_long} | 📉 Tổng tín hiệu Short: {total_short}\n"
             
-            # Thêm thông tin chi tiết cho từng timeframe
-            for analysis in valid_timeframes:
+            # Thêm thông tin chi tiết cho từng timeframe - chỉ hiển thị top 3
+            top_timeframes = sorted(valid_timeframes, key=lambda x: x['consensus_ratio'], reverse=True)[:3]
+            for analysis in top_timeframes:
                 timeframe = analysis['timeframe']
-                report += f"\n📊 <b>Timeframe {timeframe}:</b>\n"
+                report += f"\n📊 <b>{timeframe}:</b>\n"
                 
                 # === 1. MACHINE LEARNING PREDICTION ===
                 ml_prediction = analysis.get('ml_prediction')
                 if ml_prediction and ml_prediction.get('confidence', 0) > ML_CONFIDENCE_THRESHOLD:
-                    report += f"🤖 <b>MACHINE LEARNING PREDICTION:</b>\n"
-                    report += f"  • Model: {ml_prediction['model_name']}\n"
-                    report += f"  • Tín hiệu: {ml_prediction['signal']}\n"
-                    report += f"  • Confidence: {ml_prediction['confidence']:.3f}\n"
-                    report += f"  • Accuracy: {ml_prediction['model_performance']['accuracy']:.3f}\n"
-                    report += f"  • CV Score: {ml_prediction['model_performance']['cv_mean']:.3f}±{ml_prediction['model_performance']['cv_std']:.3f}\n\n"
+                    report += f"🤖 <b>ML:</b> {ml_prediction['signal']} ({ml_prediction['model_name']}, {ml_prediction['confidence']:.3f})\n"
 
                 # === 2. CONVERGENCE ANALYSIS ===
                 convergence_analysis = analysis.get('convergence_analysis')
                 if convergence_analysis and convergence_analysis.get('overall_convergence', 0) > CONVERGENCE_THRESHOLD:
-                    report += f"🎯 <b>CONVERGENCE ANALYSIS:</b>\n"
-                    report += f"  • Overall Convergence: {convergence_analysis['overall_convergence']:.3f}\n"
-                    report += f"  • Strength: {convergence_analysis['strength']:.3f}\n"
-                    report += f"  • Signals: {len(convergence_analysis['signals'])}\n"
-                    
-                    for signal in convergence_analysis['signals']:
-                        report += f"  • {signal['period']} periods: {signal['signal']} (Strength: {signal['strength']:.3f})\n"
-                    report += "\n"
+                    report += f"🎯 <b>CONVERGENCE:</b> {convergence_analysis['overall_convergence']:.3f} ({len(convergence_analysis['signals'])} signals)\n"
 
                 # === 3. DIVERGENCE/CONVERGENCE - ƯU TIÊN CAO NHẤT ===
                 divergence_consensus = analysis.get('divergence_consensus', {})
                 if divergence_consensus.get('signal') != 'Hold' and divergence_consensus.get('strength', 0) > 0.2:
                     strength_emoji = "🔥" if divergence_consensus['strength'] > 0.5 else "⚡"
-                    report += f"{strength_emoji} <b>DIVERGENCE/CONVERGENCE MẠNH:</b>\n"
-                    report += f"  • Tín hiệu: {divergence_consensus['signal']}\n"
-                    report += f"  • Độ mạnh: {divergence_consensus['strength']:.2f}\n"
-                    report += f"  • Số lượng: {divergence_consensus['count']}\n"
-                    
-                    # Hiển thị chi tiết divergence
-                    divergences = analysis.get('divergences', {})
-                    for div_type, div_info in divergences.items():
-                        if div_info.get('type') != 'None':
-                            report += f"  • {div_type}: {div_info['type']} ({div_info['strength']:.2f})\n"
-                    report += "\n"
+                    report += f"{strength_emoji} <b>DIVERGENCE:</b> {divergence_consensus['signal']} (Strength: {divergence_consensus['strength']:.2f})\n"
                 
                 # === 2. CHỈ SỐ CỐT LÕI ===
                 signals = analysis.get('signals', {})
@@ -2226,111 +2574,107 @@ def format_analysis_report(results):
                     else:
                         hold_signals.append(signal_name.upper())
                 
-                # Hiển thị các chỉ báo Long
-                if long_signals:
-                    report += f"🟢 <b>CHỈ BÁO LONG:</b>\n"
-                    for signal in long_signals:
-                        if signal == 'RSI':
-                            report += f"  • RSI: {indicators.get('rsi', 0):.1f}\n"
-                        elif signal == 'STOCH':
-                            report += f"  • Stochastic: K={indicators.get('stoch_k', 0):.1f}, D={indicators.get('stoch_d', 0):.1f}\n"
-                        elif signal == 'MACD':
-                            report += f"  • MACD: {indicators.get('macd_line', 0):.4f}\n"
-                        elif signal == 'MA':
-                            report += f"  • MA: EMA20={indicators.get('ema20', 0):.4f}, EMA50={indicators.get('ema50', 0):.4f}\n"
-                        elif signal == 'ADX':
-                            report += f"  • ADX: {indicators.get('adx', 0):.1f}\n"
-                        elif signal == 'BB':
-                            report += f"  • BB: Price near lower band\n"
-                        elif signal == 'OBV':
-                            report += f"  • OBV: {indicators.get('obv', 0):.0f}\n"
-                        elif signal == 'VWAP':
-                            report += f"  • VWAP: {indicators.get('vwap', 0):.4f}\n"
-                        elif signal == 'ATR':
-                            report += f"  • ATR: {indicators.get('atr', 0):.4f}\n"
-                        elif signal == 'PIVOT':
-                            report += f"  • Pivot: Near support\n"
-                        else:
-                            report += f"  • {signal}\n"
-                    report += "\n"
-                
-                # Hiển thị các chỉ báo Short
-                if short_signals:
-                    report += f"🔴 <b>CHỈ BÁO SHORT:</b>\n"
-                    for signal in short_signals:
-                        if signal == 'RSI':
-                            report += f"  • RSI: {indicators.get('rsi', 0):.1f}\n"
-                        elif signal == 'STOCH':
-                            report += f"  • Stochastic: K={indicators.get('stoch_k', 0):.1f}, D={indicators.get('stoch_d', 0):.1f}\n"
-                        elif signal == 'MACD':
-                            report += f"  • MACD: {indicators.get('macd_line', 0):.4f}\n"
-                        elif signal == 'MA':
-                            report += f"  • MA: EMA20={indicators.get('ema20', 0):.4f}, EMA50={indicators.get('ema50', 0):.4f}\n"
-                        elif signal == 'ADX':
-                            report += f"  • ADX: {indicators.get('adx', 0):.1f}\n"
-                        elif signal == 'BB':
-                            report += f"  • BB: Price near upper band\n"
-                        elif signal == 'OBV':
-                            report += f"  • OBV: {indicators.get('obv', 0):.0f}\n"
-                        elif signal == 'VWAP':
-                            report += f"  • VWAP: {indicators.get('vwap', 0):.4f}\n"
-                        elif signal == 'ATR':
-                            report += f"  • ATR: {indicators.get('atr', 0):.4f}\n"
-                        elif signal == 'PIVOT':
-                            report += f"  • Pivot: Near resistance\n"
-                        else:
-                            report += f"  • {signal}\n"
-                    report += "\n"
-                
-                # Hiển thị các chỉ báo Hold (nếu có)
-                if hold_signals and len(hold_signals) > 0:
-                    report += f"⚪ <b>CHỈ BÁO TRUNG LẬP:</b> {', '.join(hold_signals)}\n\n"
+                # Hiển thị các chỉ báo - Concise
+                if long_signals or short_signals:
+                    report += f"📊 <b>INDICATORS:</b> "
+                    indicators_summary = []
+                    
+                    # Add key indicator values
+                    if 'RSI' in long_signals or 'RSI' in short_signals:
+                        indicators_summary.append(f"RSI:{indicators.get('rsi', 0):.0f}")
+                    if 'STOCH' in long_signals or 'STOCH' in short_signals:
+                        indicators_summary.append(f"Stoch:{indicators.get('stoch_k', 0):.0f}")
+                    if 'MACD' in long_signals or 'MACD' in short_signals:
+                        indicators_summary.append(f"MACD:{indicators.get('macd_line', 0):.4f}")
+                    
+                    # Add signal counts
+                    if long_signals:
+                        indicators_summary.append(f"Long:{len(long_signals)}")
+                    if short_signals:
+                        indicators_summary.append(f"Short:{len(short_signals)}")
+                    
+                    report += ' | '.join(indicators_summary) + "\n"
                 
                 # Hiển thị thông tin về tín hiệu extra và market conditions
                 signal_counts = analysis.get('signal_counts', {})
                 if signal_counts:
-                    report += f"📊 <b>PHÂN TÍCH TÍN HIỆU:</b>\n"
-                    report += f"  • Tổng tín hiệu: {signal_counts.get('total', 0)}\n"
-                    report += f"  • Long: {signal_counts.get('long', 0)} ({signal_counts.get('long', 0)/signal_counts.get('total', 1)*100:.1f}%)\n"
-                    report += f"  • Short: {signal_counts.get('short', 0)} ({signal_counts.get('short', 0)/signal_counts.get('total', 1)*100:.1f}%)\n"
-                    report += f"  • Hold: {signal_counts.get('hold', 0)} ({signal_counts.get('hold', 0)/signal_counts.get('total', 1)*100:.1f}%)\n\n"
+                    total = signal_counts.get('total', 0)
+                    if total > 0:
+                        long_pct = signal_counts.get('long', 0)/total*100
+                        short_pct = signal_counts.get('short', 0)/total*100
+                        report += f"📊 <b>SIGNALS:</b> Long {long_pct:.0f}% | Short {short_pct:.0f}% | Total {total}\n"
                 
-                # Patterns
+                # Patterns - Concise
+                patterns = []
                 if analysis.get('price_pattern') != 'None':
-                    report += f"📊 <b>MÔ HÌNH GIÁ:</b> {analysis['price_pattern']}\n"
-                
+                    patterns.append(f"Price: {analysis['price_pattern']}")
                 if analysis.get('candlestick_patterns'):
-                    report += f"🕯️ <b>MÔ HÌNH NẾN:</b> {', '.join(analysis['candlestick_patterns'])}\n"
+                    patterns.append(f"Candle: {', '.join(analysis['candlestick_patterns'][:2])}")  # Show only first 2
                 
-                # Smart Money Concepts
+                if patterns:
+                    report += f"📊 <b>PATTERNS:</b> {' | '.join(patterns)}\n"
+                
+                # Smart Money Concepts - Concise
                 smc_signals = analysis.get('smc_signals', {})
-                if any(signal != 'Hold' for signal in smc_signals.values()):
-                    report += f"🧠 <b>SMART MONEY CONCEPTS:</b>\n"
-                    for smc_type, smc_signal in smc_signals.items():
-                        if smc_signal != 'Hold':
-                            report += f"  • {smc_type}: {smc_signal}\n"
+                active_smc = [f"{smc_type}: {smc_signal}" for smc_type, smc_signal in smc_signals.items() if smc_signal != 'Hold']
+                if active_smc:
+                    report += f"🧠 <b>SMC:</b> {' | '.join(active_smc[:2])}\n"  # Show only first 2
+                
+                # === SUPPORT/RESISTANCE ANALYSIS ===
+                sr_analysis = analysis.get('sr_strength_analysis')
+                if sr_analysis:
+                    report += f"🎯 <b>S/R:</b> "
+                    
+                    # Support Analysis - Ultra concise
+                    if sr_analysis.get('support_analysis'):
+                        support_info = sr_analysis['support_analysis']
+                        report += f"📈${support_info.get('price', 0):.0f} "
+                    
+                    # Resistance Analysis - Ultra concise
+                    if sr_analysis.get('resistance_analysis'):
+                        resistance_info = sr_analysis['resistance_analysis']
+                        report += f"📉${resistance_info.get('price', 0):.0f} "
+                    
+                    # Breakout Potential - Ultra concise
+                    if sr_analysis.get('breakout_potential'):
+                        breakout_info = sr_analysis['breakout_potential']
+                        report += f"🚀{breakout_info.get('direction', 'Unknown')[:3]} "
+                    
+                    report += "\n"
+                
+                # Support/Resistance Details - Ultra concise
+                sr_details = analysis.get('support_resistance_analysis')
+                if sr_details:
+                    report += f"🔍 <b>LEVELS:</b> "
+                    
+                    # Top Support Levels - Show only top 1
+                    if sr_details.get('all_support_levels'):
+                        level = sr_details['all_support_levels'][0]
+                        report += f"📈${level[1]:.0f} "
+                    
+                    # Top Resistance Levels - Show only top 1
+                    if sr_details.get('all_resistance_levels'):
+                        level = sr_details['all_resistance_levels'][0]
+                        report += f"📉${level[1]:.0f} "
+                    
+                    # Key Fibonacci Levels only - show only 38.2% and 61.8%
+                    if sr_details.get('fibonacci_levels'):
+                        fib_levels = sr_details['fibonacci_levels']
+                        if '38.2%' in fib_levels:
+                            report += f"📐38.2%:${fib_levels['38.2%']:.0f} "
+                        if '61.8%' in fib_levels:
+                            report += f"61.8%:${fib_levels['61.8%']:.0f} "
+                    
+                    report += "\n"
                 
                 # Commodity Signals (đã loại bỏ - chỉ phân tích crypto)
                 
-                # Signal Counts
-                signal_counts = analysis.get('signal_counts', {})
-                if signal_counts:
-                    report += f"📊 <b>THỐNG KÊ TÍN HIỆU:</b>\n"
-                    report += f"  • Long: {signal_counts.get('long', 0)}\n"
-                    report += f"  • Short: {signal_counts.get('short', 0)}\n"
-                    report += f"  • Hold: {signal_counts.get('hold', 0)}\n"
-                    report += f"  • Tổng: {signal_counts.get('total', 0)}\n"
+
                 
-                # Entry Points
+                # Entry Points - Ultra concise
                 if 'entry_points' in analysis:
                     entry = analysis['entry_points']
-                    report += f"\n🎯 <b>ĐIỂM ENTRY HỢP LÝ:</b>\n"
-                    report += f"  • Entry bảo thủ: ${entry['conservative']:.4f}\n"
-                    report += f"  • Entry tích cực: ${entry['aggressive']:.4f}\n"
-                    report += f"  • Stop Loss: ${entry['stop_loss']:.4f}\n"
-                    report += f"  • Take Profit: ${entry['take_profit']:.4f}\n"
-                    for analysis_line in entry['analysis']:
-                        report += f"  {analysis_line}\n"
+                    report += f"🎯 <b>ENTRY:</b> ${entry['aggressive']:.0f} | SL: ${entry['stop_loss']:.0f} | TP: ${entry['take_profit']:.0f}\n"
                 
                 report += "\n"  # Thêm dòng trống giữa các timeframe
         else:
@@ -2488,8 +2832,8 @@ def ml_model_trainer_scheduler():
     ml_thread.start()
     logger.info(f"🤖 Đã khởi động ML Model Trainer Scheduler (train mỗi {ML_UPDATE_INTERVAL//3600} giờ)")
 
-def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance):
-    """Tính toán các điểm entry hợp lý"""
+def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance, support_resistance_analysis=None):
+    """Tính toán các điểm entry hợp lý với phân tích support/resistance nâng cao"""
     entry_points = {
         'immediate': current_price,
         'conservative': current_price,
@@ -2510,7 +2854,33 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
     else:
         trend = 'bearish'
     
-    # 2. Tính các mức entry cho Long
+    # 2. Sử dụng thông tin support/resistance nâng cao nếu có
+    if support_resistance_analysis:
+        # Lấy các mức support/resistance mạnh nhất
+        strong_support = None
+        strong_resistance = None
+        
+        # Tìm support mạnh nhất
+        if support_resistance_analysis.get('all_support_levels'):
+            for level in support_resistance_analysis['all_support_levels']:
+                if level[3] > 0.7:  # Strength > 0.7
+                    strong_support = level[1]
+                    break
+        
+        # Tìm resistance mạnh nhất
+        if support_resistance_analysis.get('all_resistance_levels'):
+            for level in support_resistance_analysis['all_resistance_levels']:
+                if level[3] > 0.7:  # Strength > 0.7
+                    strong_resistance = level[1]
+                    break
+        
+        # Cập nhật support/resistance nếu tìm được mức mạnh hơn
+        if strong_support and strong_support < current_price:
+            support = strong_support
+        if strong_resistance and strong_resistance > current_price:
+            resistance = strong_resistance
+    
+    # 3. Tính các mức entry cho Long
     if trend == 'bullish':
         # Entry bảo thủ (Conservative) - Chờ pullback về hỗ trợ
         conservative_entry = min(support, get_last(bb_lower), pivot_points['s1'])
@@ -2542,7 +2912,7 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         entry_points['analysis'].append(f"  • Stop Loss: ${stop_loss:.4f}")
         entry_points['analysis'].append(f"  • Take Profit: ${take_profit:.4f}")
     
-    # 3. Tính các mức entry cho Short
+    # 4. Tính các mức entry cho Short
     elif trend == 'bearish':
         # Entry bảo thủ - Chờ bounce về kháng cự
         conservative_entry = max(resistance, get_last(bb_upper), pivot_points['r1'])
@@ -2574,7 +2944,7 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         entry_points['analysis'].append(f"  • Stop Loss: ${stop_loss:.4f}")
         entry_points['analysis'].append(f"  • Take Profit: ${take_profit:.4f}")
     
-    # 4. Phân tích RSI để tối ưu entry
+    # 5. Phân tích RSI để tối ưu entry
     if get_last(rsi) < 15:  # Từ 20 -> 15
         entry_points['analysis'].append(f"  • RSI quá bán ({get_last(rsi):.1f}) → Ưu tiên entry bảo thủ")
     elif get_last(rsi) > 85:  # Từ 80 -> 85
@@ -2582,7 +2952,7 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
     else:
         entry_points['analysis'].append(f"  • RSI trung tính ({get_last(rsi):.1f}) → Có thể entry tích cực")
     
-    # 5. Phân tích Bollinger Bands
+    # 6. Phân tích Bollinger Bands
     if current_price < get_last(bb_lower):
         entry_points['analysis'].append(f"  • Giá dưới BB Lower → Cơ hội entry tốt cho Long")
     elif current_price > get_last(bb_upper):
@@ -2590,7 +2960,33 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
     else:
         entry_points['analysis'].append(f"  • Giá trong BB → Entry ở giữa range")
     
-    # 6. Tính Risk/Reward Ratio
+    # 7. Phân tích Support/Resistance Strength
+    if support_resistance_analysis:
+        sr_analysis = support_resistance_analysis.get('sr_strength_analysis')
+        if sr_analysis:
+            # Support Strength Analysis
+            if sr_analysis.get('support_analysis'):
+                support_strength = sr_analysis['support_analysis'].get('strength', 0)
+                if support_strength > 0.8:
+                    entry_points['analysis'].append(f"  • Support mạnh (Strength: {support_strength:.2f}) → Entry bảo thủ an toàn")
+                elif support_strength < 0.4:
+                    entry_points['analysis'].append(f"  • Support yếu (Strength: {support_strength:.2f}) → Cẩn thận với breakdown")
+            
+            # Resistance Strength Analysis
+            if sr_analysis.get('resistance_analysis'):
+                resistance_strength = sr_analysis['resistance_analysis'].get('strength', 0)
+                if resistance_strength > 0.8:
+                    entry_points['analysis'].append(f"  • Resistance mạnh (Strength: {resistance_strength:.2f}) → Khó breakout")
+                elif resistance_strength < 0.4:
+                    entry_points['analysis'].append(f"  • Resistance yếu (Strength: {resistance_strength:.2f}) → Dễ breakout")
+            
+            # Breakout Potential
+            if sr_analysis.get('breakout_potential'):
+                breakout_direction = sr_analysis['breakout_potential'].get('direction', 'Unknown')
+                breakout_probability = sr_analysis['breakout_potential'].get('probability', 'Unknown')
+                entry_points['analysis'].append(f"  • Breakout tiềm năng: {breakout_direction} (Xác suất: {breakout_probability})")
+    
+    # 8. Tính Risk/Reward Ratio
     if trend == 'bullish':
         risk = current_price - entry_points['stop_loss']
         reward = entry_points['take_profit'] - current_price
@@ -3230,7 +3626,6 @@ def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             
             if not ohlcv or len(ohlcv) < ML_MIN_SAMPLES:
-                logger.warning(f"⚠️ Không đủ dữ liệu lịch sử cho {symbol} ({timeframe}): {len(ohlcv) if ohlcv else 0} candles")
                 return None
             
             # Chuyển đổi thành DataFrame
@@ -3241,8 +3636,7 @@ def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
             # Fallback sử dụng yfinance
             symbol_mapping = {
                 'BTC/USDT': 'BTC-USD',
-                'ETH/USDT': 'ETH-USD',
-                'BNB/USDT': 'BNB-USD'
+                'ETH/USDT': 'ETH-USD'
             }
             
             yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
@@ -3265,7 +3659,6 @@ def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
             df = ticker.history(period=f"{limit}d", interval=period)
             
             if len(df) < ML_MIN_SAMPLES:
-                logger.warning(f"⚠️ Không đủ dữ liệu yfinance cho {symbol} ({timeframe}): {len(df)} candles")
                 return None
         
         # Lưu dữ liệu gốc (thay thế ký tự / bằng _)
@@ -3273,7 +3666,7 @@ def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
         data_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_historical.csv")
         df.to_csv(data_file)
         
-        logger.info(f"✅ Đã lấy và lưu {len(df)} candles lịch sử cho {symbol} ({timeframe})")
+
         
         return {
             'open': df['Open'].values if 'Open' in df.columns else df['open'].values,
@@ -3291,8 +3684,7 @@ def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
         try:
             symbol_mapping = {
                 'BTC/USDT': 'BTC-USD',
-                'ETH/USDT': 'ETH-USD',
-                'BNB/USDT': 'BNB-USD'
+                'ETH/USDT': 'ETH-USD'
             }
             
             yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
@@ -3301,7 +3693,7 @@ def fetch_historical_data_for_ml(symbol, timeframe, limit=None):
             df = ticker.history(period=f"{limit}d", interval=period)
             
             if len(df) > 0:
-                logger.info(f"✅ Fallback: Lấy dữ liệu lịch sử {symbol} từ yfinance")
+
                 
                 # Lưu dữ liệu gốc
                 safe_symbol = symbol.replace('/', '_')
@@ -3334,7 +3726,6 @@ def load_or_fetch_historical_data(symbol, timeframe):
             
             # Nếu file còn mới (trong vòng 24h), load từ file
             if current_time - file_time < 86400:  # 24 giờ
-                logger.info(f"📂 Loading dữ liệu lịch sử từ file cho {symbol} ({timeframe})...")
                 df = pd.read_csv(data_file, index_col='timestamp', parse_dates=True)
                 
                 return {
@@ -3387,9 +3778,13 @@ def display_ml_features_info():
             'Volume Z-Score - Volume Standardization',
             'Volume Price Trend - Volume * Price Change'
         ],
-        'Support/Resistance (2)': [
+        'Support/Resistance (6)': [
             'Support Distance - Distance to Support Level',
-            'Resistance Distance - Distance to Resistance Level'
+            'Resistance Distance - Distance to Resistance Level',
+            'Fibonacci Retracement Levels - 23.6%, 38.2%, 50%, 61.8%',
+            'Pivot Points - Classic Pivot, R1, S1, R2, S2, R3, S3',
+            'Swing Highs/Lows - Dynamic Support/Resistance',
+            'Volume Weighted Levels - High Volume Price Zones'
         ],
         'Market Structure (2)': [
             'Trend Strength - Higher Highs vs Lower Lows',
@@ -3398,10 +3793,16 @@ def display_ml_features_info():
         'Price Patterns (2)': [
             'Hammer - Hammer Candlestick Pattern',
             'Doji - Doji Candlestick Pattern'
+        ],
+        'Advanced Support/Resistance (4)': [
+            'Psychological Levels - Round Numbers (1000, 2000, 5000)',
+            'Historical Levels - Cluster Analysis of Peaks/Troughs',
+            'Support/Resistance Strength Analysis - Risk Assessment',
+            'Breakout Potential - Direction and Probability Analysis'
         ]
     }
     
-    print("\n🤖 MACHINE LEARNING FEATURES (35+ Features)")
+    print("\n🤖 MACHINE LEARNING FEATURES (40+ Features)")
     print("=" * 50)
     
     total_features = 0
@@ -3417,6 +3818,7 @@ def display_ml_features_info():
     print("🤖 Models: Random Forest, XGBoost, LightGBM, Gradient Boosting, Logistic Regression, SVM")
     print("🔄 Auto-training: Every 24 hours")
     print("💾 Data Storage: Historical data cached locally")
+    print("🎯 Advanced Support/Resistance: Fibonacci, Pivot Points, Swing Levels, Volume Analysis, Psychological Levels")
 
 def get_ml_training_status():
     """Kiểm tra trạng thái training ML models"""
@@ -3500,14 +3902,7 @@ def main():
         else:
             logger.warning(f"⚠️ Không thể phân tích {symbol}")
 
-    # Debug logging tổng quan
-    logger.info(f"🔍 DEBUG TỔNG QUAN:")
-    logger.info(f"  • Tổng số symbols: {len(symbols)}")
-    logger.info(f"  • Số kết quả thành công: {len(results)}")
-    logger.info(f"  • SIGNAL_THRESHOLD: {SIGNAL_THRESHOLD}")
-    
-    for result in results:
-        logger.info(f"  • {result['symbol']}: {result['decision']} (ratio={result['consensus_ratio']:.3f}, valid_tfs={len(result['valid_timeframes'])})")
+
 
     # Hiển thị thống kê độ chính xác nếu có
     accuracy_data = get_prediction_accuracy_data()
@@ -3524,15 +3919,10 @@ def main():
         logger.error("❌ Telegram test thất bại!")
     
     # Gửi báo cáo Telegram
-    logger.info(f"🔍 DEBUG: Có {len(results)} kết quả để gửi")
     if results:
-        # Debug: Kiểm tra từng kết quả trước khi format
-        for result in results:
-            logger.info(f"🔍 DEBUG REPORT: {result['symbol']} = {result['decision']} (ratio={result['consensus_ratio']:.3f})")
+
         
         report = format_analysis_report(results)
-        logger.info(f"🔍 DEBUG: Report length = {len(report)} characters")
-        logger.info(f"🔍 DEBUG: Report preview = {report[:200]}...")
         success = send_telegram_message(report)
         if success:
             logger.info("📱 Đã gửi báo cáo Telegram thành công!")

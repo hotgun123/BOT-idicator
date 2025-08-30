@@ -109,7 +109,7 @@ exness_exchange = None
 SYMBOLS = ['BTC/USDT', 'ETH/USDT']  # Bỏ BNB theo yêu cầu của user
 TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
 ML_TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d']  # Timeframes cho ML training
-CANDLE_LIMIT = 200
+CANDLE_LIMIT = 1000
 SIGNAL_THRESHOLD = 0.3 # Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
 RETRY_ATTEMPTS = 2
 
@@ -153,6 +153,24 @@ def ensure_ml_directories():
     """Đảm bảo các thư mục ML tồn tại"""
     Path(ML_MODELS_DIR).mkdir(exist_ok=True)
     Path(ML_DATA_DIR).mkdir(exist_ok=True)
+
+def generate_trading_recommendation(current_price, support_price, resistance_price):
+    """Tạo khuyến nghị giao dịch dựa trên vị trí giá so với support/resistance"""
+    # Tính khoảng cách % đến các mức
+    support_distance = ((current_price - support_price) / current_price) * 100
+    resistance_distance = ((resistance_price - current_price) / current_price) * 100
+    
+    # Đưa ra khuyến nghị dựa trên vị trí giá
+    if support_distance <= 2.0:  # Giá gần support (trong vòng 2%)
+        return f"🟢 <b>LONG</b> - Giá gần vùng hỗ trợ mạnh ${support_price:.0f} (cách {support_distance:.1f}%)"
+    elif resistance_distance <= 2.0:  # Giá gần resistance (trong vòng 2%)
+        return f"🔴 <b>SHORT</b> - Giá gần vùng cản mạnh ${resistance_price:.0f} (cách {resistance_distance:.1f}%)"
+    elif support_distance <= 5.0:  # Giá trong vùng support (trong vòng 5%)
+        return f"🟡 <b>HOLD</b> - Giá trong vùng hỗ trợ ${support_price:.0f} (cách {support_distance:.1f}%)"
+    elif resistance_distance <= 5.0:  # Giá trong vùng resistance (trong vòng 5%)
+        return f"🟡 <b>HOLD</b> - Giá trong vùng cản ${resistance_price:.0f} (cách {resistance_distance:.1f}%)"
+    else:  # Giá ở giữa
+        return f"⚪ <b>NEUTRAL</b> - Giá ở giữa vùng giao dịch (S: ${support_price:.0f}, R: ${resistance_price:.0f})"
 
 def create_ml_features(data, symbol, timeframe):
     """Tạo features cho Machine Learning từ dữ liệu OHLCV"""
@@ -282,18 +300,21 @@ def create_ml_features(data, symbol, timeframe):
         logger.error(f"❌ Lỗi khi tạo ML features cho {symbol}: {e}")
         return None, None, None
 
-def train_ml_models(symbol, timeframe):
-    """Train các mô hình Machine Learning với dữ liệu lịch sử"""
+def train_ml_models(symbol, timeframe, force_full_update=False):
+    """Train các mô hình Machine Learning với dữ liệu lịch sử (incremental update)"""
     try:
         ensure_ml_directories()
         
-        # Lấy dữ liệu lịch sử (5000 candles)
-        data = load_or_fetch_historical_data(symbol, timeframe)
+        # Kiểm tra độ mới của dữ liệu
+        is_fresh, freshness_msg = check_data_freshness(symbol, timeframe)
+        
+        # Lấy dữ liệu lịch sử với incremental update
+        data = load_and_update_historical_data(symbol, timeframe, force_full_update)
         if data is None:
             logger.warning(f"⚠️ Không thể lấy dữ liệu lịch sử cho {symbol} ({timeframe})")
             return None
             
-        logger.info(f"📊 Dữ liệu {symbol} ({timeframe}): {len(data['close'])} candles")
+        logger.info(f"📊 Dữ liệu {symbol} ({timeframe}): {len(data['close'])} candles ({freshness_msg})")
         
         if len(data['close']) < ML_MIN_SAMPLES:
             logger.warning(f"⚠️ Không đủ dữ liệu lịch sử để train ML cho {symbol} ({timeframe}): {len(data['close'])} < {ML_MIN_SAMPLES}")
@@ -452,18 +473,43 @@ def predict_with_ml(symbol, timeframe, current_data):
         # Determine signal
         if prediction_class == 1 and confidence > ML_CONFIDENCE_THRESHOLD:
             signal = 'Long'
+            predicted_direction = 'up'
         elif prediction_class == 0 and confidence > ML_CONFIDENCE_THRESHOLD:
             signal = 'Short'
+            predicted_direction = 'down'
         else:
             signal = 'Hold'
+            predicted_direction = 'sideways'
         
-        return {
+        # Tạo dữ liệu dự đoán để lưu với thông tin TP/SL
+        current_price = current_data['close'][-1]
+        prediction_data = {
+            'predicted_price': current_price,
+            'predicted_direction': predicted_direction,
+            'features': feature_columns,
+            'model_accuracy': performance[best_model_name]['cv_mean'],
+            'prediction_horizon': timeframe,
+            'current_price': current_price,  # Giá hiện tại làm entry price
+            'target_profit_pct': 2.0,  # Mục tiêu lợi nhuận 2%
+            'stop_loss_pct': 1.0,  # Cắt lỗ 1%
+            'max_hold_time': '4h'  # Thời gian giữ lệnh tối đa
+        }
+        
+        # Lưu dự đoán để đánh giá độ chính xác sau này
+        prediction_id = save_ml_prediction(symbol, timeframe, prediction_data, confidence, best_model_name)
+        
+        # Điều chỉnh thuật toán dựa trên độ chính xác lịch sử
+        adjusted_prediction = adjust_ml_algorithm_based_on_accuracy(symbol, timeframe, {
             'signal': signal,
             'confidence': confidence,
             'probability': prediction_proba,
             'model_name': best_model_name,
-            'model_performance': performance[best_model_name]
-        }
+            'model_performance': performance[best_model_name],
+            'predicted_direction': predicted_direction,
+            'model_type': best_model_name
+        })
+        
+        return adjusted_prediction
         
     except Exception as e:
         logger.error(f"❌ Lỗi khi dự đoán ML cho {symbol}: {e}")
@@ -955,6 +1001,39 @@ def cleanup_old_predictions():
     
     except Exception as e:
         logger.error(f"❌ Lỗi khi dọn dẹp dự đoán cũ: {e}")
+
+def cleanup_old_data_files():
+    """Giữ lại tất cả dữ liệu lịch sử để AI/ML học liên tục"""
+    try:
+        logger.info("🧹 Kiểm tra tình trạng dữ liệu lịch sử...")
+        
+        total_files = 0
+        total_candles = 0
+        total_size_mb = 0
+        
+        for symbol in ['BTC_USDT', 'ETH_USDT']:
+            for timeframe in ML_TIMEFRAMES:
+                data_file = os.path.join(ML_DATA_DIR, f"{symbol}_{timeframe}_historical.csv")
+                
+                if os.path.exists(data_file):
+                    try:
+                        df = pd.read_csv(data_file, index_col='timestamp', parse_dates=True)
+                        file_size_mb = os.path.getsize(data_file) / (1024 * 1024)
+                        
+                        logger.info(f"📊 {symbol}_{timeframe}: {len(df)} candles, {file_size_mb:.2f}MB")
+                        
+                        total_files += 1
+                        total_candles += len(df)
+                        total_size_mb += file_size_mb
+                        
+                    except Exception as e:
+                        logger.warning(f"⚠️ Không thể đọc {data_file}: {e}")
+        
+        logger.info(f"📈 Tổng cộng: {total_files} files, {total_candles:,} candles, {total_size_mb:.2f}MB")
+        logger.info("💡 Giữ lại tất cả dữ liệu lịch sử để AI/ML học liên tục")
+            
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi kiểm tra dữ liệu: {e}")
 
 def adjust_analysis_based_on_accuracy(analysis_result, symbol, timeframe):
     """Điều chỉnh phân tích dựa trên độ chính xác lịch sử"""
@@ -1504,6 +1583,7 @@ def analyze_support_resistance_strength(support_resistance_analysis, current_pri
                 analysis['support_analysis']['risk'] = 'Low - Price far from support'
                 analysis['support_analysis']['action'] = 'Support not immediate concern'
             
+            analysis['support_analysis']['price'] = support['price']
             analysis['support_analysis']['strength'] = support_strength
             analysis['support_analysis']['type'] = support['type']
             analysis['support_analysis']['description'] = support['description']
@@ -1527,6 +1607,7 @@ def analyze_support_resistance_strength(support_resistance_analysis, current_pri
                 analysis['resistance_analysis']['risk'] = 'Low - Price far from resistance'
                 analysis['resistance_analysis']['action'] = 'Resistance not immediate concern'
             
+            analysis['resistance_analysis']['price'] = resistance['price']
             analysis['resistance_analysis']['strength'] = resistance_strength
             analysis['resistance_analysis']['type'] = resistance['type']
             analysis['resistance_analysis']['description'] = resistance['description']
@@ -1540,16 +1621,22 @@ def analyze_support_resistance_strength(support_resistance_analysis, current_pri
                 analysis['breakout_potential']['direction'] = 'Downside'
                 analysis['breakout_potential']['probability'] = 'Medium-High'
                 analysis['breakout_potential']['target'] = support['price'] * 0.95
+                analysis['breakout_potential']['support_price'] = support['price']
+                analysis['breakout_potential']['resistance_price'] = resistance['price']
                 analysis['recommendations'].append('Watch for support breakdown - prepare for short')
             elif current_position > 0.8:  # Gần resistance
                 analysis['breakout_potential']['direction'] = 'Upside'
                 analysis['breakout_potential']['probability'] = 'Medium-High'
                 analysis['breakout_potential']['target'] = resistance['price'] * 1.05
+                analysis['breakout_potential']['support_price'] = support['price']
+                analysis['breakout_potential']['resistance_price'] = resistance['price']
                 analysis['recommendations'].append('Watch for resistance breakout - prepare for long')
             else:  # Ở giữa range
                 analysis['breakout_potential']['direction'] = 'Sideways'
                 analysis['breakout_potential']['probability'] = 'Low'
                 analysis['breakout_potential']['target'] = 'Range bound trading'
+                analysis['breakout_potential']['support_price'] = support['price']
+                analysis['breakout_potential']['resistance_price'] = resistance['price']
                 analysis['recommendations'].append('Range bound market - trade between support/resistance')
         
         # Tìm các vùng consolidation
@@ -2108,9 +2195,6 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     extra_signals.extend(market_condition_signals)
 
 
-    # === 15. TÍNH TOÁN ĐIỂM ENTRY ===
-    entry_points = calculate_entry_points(current_price, high, low, close, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance, support_resistance_analysis)
-
     # === 16. MACHINE LEARNING PREDICTION ===
     ml_prediction = None
     try:
@@ -2176,7 +2260,8 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             consensus = 'Hold'
             confidence = 0.5
     
-
+    # === 15. TÍNH TOÁN ĐIỂM ENTRY ===
+    entry_points = calculate_entry_points(current_price, high, low, close, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance, support_resistance_analysis, consensus)
 
     # === 19. TRẢ VỀ KẾT QUẢ TỐI ƯU ===
     return {
@@ -2234,7 +2319,8 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             'short': short_count,
             'hold': hold_count,
             'total': total_signals
-        }
+        },
+        'current_price': current_price  # Thêm current_price để sử dụng trong khuyến nghị
     }
 
 def make_decision(analyses):
@@ -2314,7 +2400,14 @@ def analyze_coin(symbol):
 
     analyses = []
     for timeframe in TIMEFRAMES:
-        data = fetch_ohlcv(symbol, timeframe, CANDLE_LIMIT)
+        # Sử dụng incremental data loading cho phân tích real-time
+        if timeframe in ML_TIMEFRAMES:
+            # Sử dụng dữ liệu ML đã được cập nhật
+            data = load_and_update_historical_data(symbol, timeframe, force_full_update=False)
+        else:
+            # Sử dụng fetch_ohlcv cho các timeframe không có ML
+            data = fetch_ohlcv(symbol, timeframe, CANDLE_LIMIT)
+        
         if data is None:
             continue
         
@@ -2362,6 +2455,15 @@ def analyze_coin(symbol):
             
             # Lưu dự đoán
             save_prediction(symbol, analysis['timeframe'], prediction_data, current_price)
+    
+    # Xác minh các dự đoán ML cũ với giá hiện tại
+    for timeframe in ML_TIMEFRAMES:
+        try:
+            verification_result = verify_ml_predictions(symbol, timeframe, current_price, pd.Timestamp.now())
+            if verification_result:
+                logger.info(f"🔍 Đã xác minh {verification_result['total_checked']} dự đoán ML cho {symbol} ({timeframe})")
+        except Exception as e:
+            logger.warning(f"⚠️ Không thể xác minh dự đoán ML cho {symbol} ({timeframe}): {e}")
 
     return result
 
@@ -2626,14 +2728,26 @@ def format_analysis_report(results):
                     report += f"🎯 <b>S/R:</b> "
                     
                     # Support Analysis - Ultra concise
-                    if sr_analysis.get('support_analysis'):
+                    if sr_analysis.get('support_analysis') and sr_analysis['support_analysis'].get('price'):
                         support_info = sr_analysis['support_analysis']
-                        report += f"📈${support_info.get('price', 0):.0f} "
+                        price = support_info.get('price', 0)
+                        if price > 0:
+                            report += f"📈${price:.0f} "
+                        else:
+                            logger.warning(f"⚠️ Support price is 0 or invalid: {support_info}")
+                    else:
+                        logger.warning(f"⚠️ No support_analysis or price found in sr_analysis: {sr_analysis}")
                     
                     # Resistance Analysis - Ultra concise
-                    if sr_analysis.get('resistance_analysis'):
+                    if sr_analysis.get('resistance_analysis') and sr_analysis['resistance_analysis'].get('price'):
                         resistance_info = sr_analysis['resistance_analysis']
-                        report += f"📉${resistance_info.get('price', 0):.0f} "
+                        price = resistance_info.get('price', 0)
+                        if price > 0:
+                            report += f"📉${price:.0f} "
+                        else:
+                            logger.warning(f"⚠️ Resistance price is 0 or invalid: {resistance_info}")
+                    else:
+                        logger.warning(f"⚠️ No resistance_analysis or price found in sr_analysis: {sr_analysis}")
                     
                     # Breakout Potential - Ultra concise
                     if sr_analysis.get('breakout_potential'):
@@ -2664,6 +2778,54 @@ def format_analysis_report(results):
                             report += f"📐38.2%:${fib_levels['38.2%']:.0f} "
                         if '61.8%' in fib_levels:
                             report += f"61.8%:${fib_levels['61.8%']:.0f} "
+                    
+                                        # Thêm khuyến nghị giao dịch dựa trên LEVELS
+                    current_price = analysis.get('current_price', 0)
+                    if current_price > 0:
+                        report += "\n💡 <b>KHUYẾN NGHỊ:</b> "
+                        
+                        # Lấy các mức quan trọng
+                        support_levels = sr_details.get('all_support_levels', [])
+                        resistance_levels = sr_details.get('all_resistance_levels', [])
+                        
+                        if support_levels and resistance_levels:
+                            nearest_support = support_levels[0][1]  # Giá support gần nhất
+                            nearest_resistance = resistance_levels[0][1]  # Giá resistance gần nhất
+                            
+                            # Tạo khuyến nghị từ các mức support/resistance
+                            recommendation = generate_trading_recommendation(
+                                current_price, nearest_support, nearest_resistance
+                            )
+                            report += recommendation
+                    
+                    report += "\n"
+                
+                # Fallback: Nếu không có S/R từ sr_strength_analysis, hiển thị từ support_resistance_analysis
+                elif not sr_analysis and sr_details:
+                    report += f"🎯 <b>S/R:</b> "
+                    
+                    # Hiển thị support/resistance cơ bản
+                    if sr_details.get('nearest_support') and sr_details['nearest_support'].get('price'):
+                        support_price = sr_details['nearest_support']['price']
+                        if support_price > 0:
+                            report += f"📈${support_price:.0f} "
+                    
+                    if sr_details.get('nearest_resistance') and sr_details['nearest_resistance'].get('price'):
+                        resistance_price = sr_details['nearest_resistance']['price']
+                        if resistance_price > 0:
+                            report += f"📉${resistance_price:.0f} "
+                    
+                    # Thêm khuyến nghị giao dịch cho fallback
+                    current_price = analysis.get('current_price', 0)
+                    if current_price > 0:
+                        report += "\n💡 <b>KHUYẾN NGHỊ:</b> "
+                        
+                        if support_price > 0 and resistance_price > 0:
+                            # Tạo khuyến nghị từ các mức support/resistance
+                            recommendation = generate_trading_recommendation(
+                                current_price, support_price, resistance_price
+                            )
+                            report += recommendation
                     
                     report += "\n"
                 
@@ -2832,8 +2994,21 @@ def ml_model_trainer_scheduler():
     ml_thread.start()
     logger.info(f"🤖 Đã khởi động ML Model Trainer Scheduler (train mỗi {ML_UPDATE_INTERVAL//3600} giờ)")
 
-def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance, support_resistance_analysis=None):
-    """Tính toán các điểm entry hợp lý với phân tích support/resistance nâng cao"""
+def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb_lower, ema50, pivot_points, support, resistance, support_resistance_analysis=None, signal='Hold'):
+    """Tính toán các điểm entry hợp lý với phân tích support/resistance nâng cao và khuyến nghị từ chỉ báo"""
+    
+    # === CHỈ TÍNH ENTRY KHI CÓ TÍN HIỆU RÕ RÀNG ===
+    if signal not in ['Long', 'Short']:
+        # Trả về entry points mặc định khi không có tín hiệu rõ ràng
+        return {
+            'immediate': current_price,
+            'conservative': current_price,
+            'aggressive': current_price,
+            'stop_loss': 0,  # Không có SL khi không có tín hiệu
+            'take_profit': 0,  # Không có TP khi không có tín hiệu
+            'analysis': ["⚠️ KHÔNG CÓ TÍN HIỆU RÕ RÀNG - Không đưa ra entry points để tránh mâu thuẫn"]
+        }
+    
     entry_points = {
         'immediate': current_price,
         'conservative': current_price,
@@ -2847,12 +3022,27 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
     def get_last(series):
         return series.iloc[-1] if hasattr(series, 'iloc') else series[-1]
     
-    # 1. Phân tích xu hướng hiện tại
-    trend = 'neutral'
-    if current_price > get_last(ema50):
+    # Helper function để tính ATR fallback
+    def calculate_atr_fallback():
+        recent_ranges = []
+        for i in range(max(0, len(highs)-10), len(highs)):
+            if hasattr(highs, 'iloc'):
+                recent_ranges.append(highs.iloc[i] - lows.iloc[i])
+            else:
+                recent_ranges.append(highs[i] - lows[i])
+        return np.mean(recent_ranges) if recent_ranges else (current_price * 0.02)
+    
+    # 1. Sử dụng khuyến nghị từ chỉ báo thay vì chỉ dựa vào trend
+    if signal == 'Long':
         trend = 'bullish'
-    else:
+    elif signal == 'Short':
         trend = 'bearish'
+    else:
+        # Fallback: Phân tích xu hướng hiện tại nếu không có khuyến nghị
+        if current_price > get_last(ema50):
+            trend = 'bullish'
+        else:
+            trend = 'bearish'
     
     # 2. Sử dụng thông tin support/resistance nâng cao nếu có
     if support_resistance_analysis:
@@ -2893,17 +3083,25 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         # Stop Loss - Dựa trên mức hỗ trợ mạnh (s2) để tạo R/R tốt hơn
         # Sử dụng s2 thay vì s1 để SL gần entry hơn
         stop_loss = min(support * 0.998, get_last(bb_lower) * 0.999, pivot_points['s2'] * 0.999)
+        
+        # === VALIDATION: Đảm bảo SL luôn thấp hơn entry ===
+        if stop_loss >= aggressive_entry:
+            # Fallback: Sử dụng ATR để tính SL hợp lý
+            atr = calculate_atr_fallback()
+            stop_loss = aggressive_entry - (atr * 0.5)  # SL = Entry - 0.5*ATR
+            entry_points['analysis'].append(f"  • SL được điều chỉnh bằng ATR để đảm bảo logic")
+        
         entry_points['stop_loss'] = stop_loss
         
         # Take Profit - Tỷ lệ với khoảng cách SL để tạo R/R ít nhất 1:2
-        sl_distance = current_price - stop_loss
+        sl_distance = aggressive_entry - stop_loss
         if sl_distance > 0:
             # TP = Entry + (SL_distance * 2.5) để có R/R ít nhất 1:2.5
-            take_profit = current_price + (sl_distance * 2.5)
+            take_profit = aggressive_entry + (sl_distance * 2.5)
         else:
             # Fallback nếu không tính được SL distance
-            atr = np.mean([highs[i] - lows[i] for i in range(-10, 0)])
-            take_profit = current_price + (atr * 1.5)
+            atr = calculate_atr_fallback()
+            take_profit = aggressive_entry + (atr * 1.5)
         entry_points['take_profit'] = take_profit
         
         entry_points['analysis'].append(f"📈 XU HƯỚNG TĂNG - Điểm entry hợp lý:")
@@ -2925,17 +3123,25 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         # Stop Loss - Dựa trên mức kháng cự mạnh (r2) để tạo R/R tốt hơn
         # Sử dụng r2 thay vì r1 để SL gần entry hơn
         stop_loss = max(resistance * 1.002, get_last(bb_upper) * 1.001, pivot_points['r2'] * 1.001)
+        
+        # === VALIDATION: Đảm bảo SL luôn cao hơn entry ===
+        if stop_loss <= aggressive_entry:
+            # Fallback: Sử dụng ATR để tính SL hợp lý
+            atr = calculate_atr_fallback()
+            stop_loss = aggressive_entry + (atr * 0.5)  # SL = Entry + 0.5*ATR
+            entry_points['analysis'].append(f"  • SL được điều chỉnh bằng ATR để đảm bảo logic")
+        
         entry_points['stop_loss'] = stop_loss
         
         # Take Profit - Tỷ lệ với khoảng cách SL để tạo R/R ít nhất 1:2
-        sl_distance = stop_loss - current_price
+        sl_distance = stop_loss - aggressive_entry
         if sl_distance > 0:
             # TP = Entry - (SL_distance * 2.5) để có R/R ít nhất 1:2.5
-            take_profit = current_price - (sl_distance * 2.5)
+            take_profit = aggressive_entry - (sl_distance * 2.5)
         else:
             # Fallback nếu không tính được SL distance
-            atr = np.mean([highs[i] - lows[i] for i in range(-10, 0)])
-            take_profit = current_price - (atr * 1.5)
+            atr = calculate_atr_fallback()
+            take_profit = aggressive_entry - (atr * 1.5)
         entry_points['take_profit'] = take_profit
         
         entry_points['analysis'].append(f"📉 XU HƯỚNG GIẢM - Điểm entry hợp lý:")
@@ -2945,12 +3151,13 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
         entry_points['analysis'].append(f"  • Take Profit: ${take_profit:.4f}")
     
     # 5. Phân tích RSI để tối ưu entry
-    if get_last(rsi) < 15:  # Từ 20 -> 15
-        entry_points['analysis'].append(f"  • RSI quá bán ({get_last(rsi):.1f}) → Ưu tiên entry bảo thủ")
-    elif get_last(rsi) > 85:  # Từ 80 -> 85
-        entry_points['analysis'].append(f"  • RSI quá mua ({get_last(rsi):.1f}) → Ưu tiên entry bảo thủ")
+    rsi_value = get_last(rsi)
+    if rsi_value < 15:  # Từ 20 -> 15
+        entry_points['analysis'].append(f"  • RSI quá bán ({rsi_value:.1f}) → Ưu tiên entry bảo thủ")
+    elif rsi_value > 85:  # Từ 80 -> 85
+        entry_points['analysis'].append(f"  • RSI quá mua ({rsi_value:.1f}) → Ưu tiên entry bảo thủ")
     else:
-        entry_points['analysis'].append(f"  • RSI trung tính ({get_last(rsi):.1f}) → Có thể entry tích cực")
+        entry_points['analysis'].append(f"  • RSI trung tính ({rsi_value:.1f}) → Có thể entry tích cực")
     
     # 6. Phân tích Bollinger Bands
     if current_price < get_last(bb_lower):
@@ -2988,13 +3195,13 @@ def calculate_entry_points(current_price, highs, lows, closes, rsi, bb_upper, bb
     
     # 8. Tính Risk/Reward Ratio
     if trend == 'bullish':
-        risk = current_price - entry_points['stop_loss']
-        reward = entry_points['take_profit'] - current_price
+        risk = entry_points['aggressive'] - entry_points['stop_loss']
+        reward = entry_points['take_profit'] - entry_points['aggressive']
         rr_ratio = reward / risk if risk > 0 else 0
         entry_points['analysis'].append(f"  • Risk/Reward Ratio: 1:{rr_ratio:.2f}")
     elif trend == 'bearish':
-        risk = entry_points['stop_loss'] - current_price
-        reward = current_price - entry_points['take_profit']
+        risk = entry_points['stop_loss'] - entry_points['aggressive']
+        reward = entry_points['aggressive'] - entry_points['take_profit']
         rr_ratio = reward / risk if risk > 0 else 0
         entry_points['analysis'].append(f"  • Risk/Reward Ratio: 1:{rr_ratio:.2f}")
     
@@ -3821,7 +4028,7 @@ def display_ml_features_info():
     print("🎯 Advanced Support/Resistance: Fibonacci, Pivot Points, Swing Levels, Volume Analysis, Psychological Levels")
 
 def get_ml_training_status():
-    """Kiểm tra trạng thái training ML models"""
+    """Kiểm tra trạng thái training ML models và dữ liệu"""
     try:
         ensure_ml_directories()
         
@@ -3829,7 +4036,8 @@ def get_ml_training_status():
             'models_trained': [],
             'models_missing': [],
             'last_training': None,
-            'data_files': []
+            'data_files': [],
+            'data_statistics': {}
         }
         
         # Kiểm tra models đã train
@@ -3846,6 +4054,11 @@ def get_ml_training_status():
                     status['models_trained'].append(f"{symbol} ({timeframe}): {len(model_files)} models")
                 else:
                     status['models_missing'].append(f"{symbol} ({timeframe})")
+                
+                # Thêm thống kê dữ liệu
+                stats = get_data_statistics(symbol, timeframe)
+                if stats:
+                    status['data_statistics'][f"{symbol}_{timeframe}"] = stats
         
         # Kiểm tra data files
         data_files = [f for f in os.listdir(ML_DATA_DIR) if f.endswith('_historical.csv')]
@@ -3857,6 +4070,624 @@ def get_ml_training_status():
         logger.error(f"❌ Lỗi khi kiểm tra trạng thái ML: {e}")
         return None
 
+def display_data_update_summary():
+    """Hiển thị tóm tắt về việc cập nhật dữ liệu"""
+    try:
+        logger.info("📊 TÓM TẮT CẬP NHẬT DỮ LIỆU:")
+        logger.info("=" * 50)
+        
+        total_files = 0
+        total_candles = 0
+        total_size_mb = 0
+        
+        for symbol in ['BTC/USDT', 'ETH/USDT']:
+            for timeframe in ML_TIMEFRAMES:
+                stats = get_data_statistics(symbol, timeframe)
+                if stats:
+                    total_files += 1
+                    total_candles += stats['total_candles']
+                    total_size_mb += stats['file_size_mb']
+                    
+                    is_fresh, freshness_msg = check_data_freshness(symbol, timeframe)
+                    status_emoji = "✅" if is_fresh else "⚠️"
+                    
+                    logger.info(f"{status_emoji} {symbol} ({timeframe}): {stats['total_candles']} candles, {stats['file_size_mb']:.2f}MB")
+                    logger.info(f"   📅 {stats['date_range']['start']} → {stats['date_range']['end']}")
+                    logger.info(f"   🕒 {freshness_msg}")
+                else:
+                    logger.info(f"❌ {symbol} ({timeframe}): Chưa có dữ liệu")
+        
+        logger.info("=" * 50)
+        logger.info(f"📈 Tổng cộng: {total_files} files, {total_candles:,} candles, {total_size_mb:.2f}MB")
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi hiển thị tóm tắt dữ liệu: {e}")
+
+def get_latest_timestamp_from_data(data):
+    """Lấy timestamp mới nhất từ dữ liệu"""
+    try:
+        if 'timestamp' in data and len(data['timestamp']) > 0:
+            latest_ts = data['timestamp'][-1]
+            # Chuyển đổi về pandas Timestamp để tránh lỗi numpy
+            if hasattr(latest_ts, 'to_pydatetime'):
+                return pd.Timestamp(latest_ts.to_pydatetime())
+            elif isinstance(latest_ts, str):
+                return pd.to_datetime(latest_ts)
+            else:
+                return pd.Timestamp(latest_ts)
+        return None
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi lấy timestamp mới nhất: {e}")
+        return None
+
+def fetch_incremental_data(symbol, timeframe, since_timestamp=None, limit=1000):
+    """Lấy dữ liệu tăng dần từ timestamp cụ thể"""
+    try:
+        logger.info(f"📊 Đang lấy dữ liệu tăng dần cho {symbol} ({timeframe}) từ {since_timestamp}...")
+        
+        if exchange:
+            # Lấy dữ liệu từ Binance với since parameter
+            if since_timestamp:
+                # Chuyển đổi timestamp thành Unix timestamp (milliseconds) cho Binance API
+                if isinstance(since_timestamp, str):
+                    since_timestamp = pd.to_datetime(since_timestamp)
+                if hasattr(since_timestamp, 'timestamp'):
+                    since_ms = int(since_timestamp.timestamp() * 1000)
+                else:
+                    since_ms = int(since_timestamp * 1000)
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
+            else:
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            
+            if not ohlcv:
+                return None
+            
+            # Chuyển đổi thành DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            
+        else:
+            # Fallback sử dụng yfinance
+            symbol_mapping = {
+                'BTC/USDT': 'BTC-USD',
+                'ETH/USDT': 'ETH-USD'
+            }
+            
+            yf_symbol = symbol_mapping.get(symbol, symbol.replace('/', '-'))
+            ticker = yf.Ticker(yf_symbol)
+            
+            # Chuyển đổi timeframe
+            period_mapping = {
+                '1h': '1h',
+                '2h': '2h', 
+                '4h': '4h',
+                '6h': '6h',
+                '8h': '8h',
+                '12h': '12h',
+                '1d': '1d',
+                '3d': '3d',
+                '1w': '1wk'
+            }
+            
+            period = period_mapping.get(timeframe, '1d')
+            
+            # Tính toán period dựa trên since_timestamp
+            if since_timestamp:
+                # Chuyển đổi timestamp thành datetime
+                since_dt = pd.to_datetime(since_timestamp)
+                current_dt = pd.Timestamp.now()
+                # Chuyển đổi về pandas Timestamp để tránh lỗi numpy
+                if hasattr(since_dt, 'to_pydatetime'):
+                    since_dt = pd.Timestamp(since_dt.to_pydatetime())
+                if hasattr(current_dt, 'to_pydatetime'):
+                    current_dt = pd.Timestamp(current_dt.to_pydatetime())
+                days_diff = (current_dt - since_dt).days
+                period_str = f"{max(days_diff + 1, 1)}d"
+            else:
+                period_str = f"{limit}d"
+            
+            df = ticker.history(period=period_str, interval=period)
+            
+            if len(df) == 0:
+                return None
+        
+        return {
+            'open': df['Open'].values if 'Open' in df.columns else df['open'].values,
+            'high': df['High'].values if 'High' in df.columns else df['high'].values,
+            'low': df['Low'].values if 'Low' in df.columns else df['low'].values,
+            'close': df['Close'].values if 'Close' in df.columns else df['close'].values,
+            'volume': df['Volume'].values if 'Volume' in df.columns else df['volume'].values,
+            'timestamp': df.index.values
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi lấy dữ liệu tăng dần cho {symbol} ({timeframe}): {e}")
+        return None
+
+def merge_historical_data(existing_data, new_data):
+    """Merge dữ liệu mới với dữ liệu cũ, loại bỏ duplicates"""
+    try:
+        if existing_data is None or new_data is None:
+            return new_data if new_data else existing_data
+        
+        # Chuyển đổi thành DataFrame để dễ xử lý
+        existing_df = pd.DataFrame({
+            'open': existing_data['open'],
+            'high': existing_data['high'],
+            'low': existing_data['low'],
+            'close': existing_data['close'],
+            'volume': existing_data['volume']
+        }, index=existing_data['timestamp'])
+        
+        new_df = pd.DataFrame({
+            'open': new_data['open'],
+            'high': new_data['high'],
+            'low': new_data['low'],
+            'close': new_data['close'],
+            'volume': new_data['volume']
+        }, index=new_data['timestamp'])
+        
+        # Merge và loại bỏ duplicates
+        merged_df = pd.concat([existing_df, new_df])
+        merged_df = merged_df[~merged_df.index.duplicated(keep='last')]  # Giữ dữ liệu mới nhất
+        merged_df = merged_df.sort_index()  # Sắp xếp theo thời gian
+        
+        # Giữ lại tất cả dữ liệu lịch sử để AI/ML học liên tục
+        # Không giới hạn số lượng candles - để ML có thể học từ toàn bộ lịch sử
+        
+        return {
+            'open': merged_df['open'].values,
+            'high': merged_df['high'].values,
+            'low': merged_df['low'].values,
+            'close': merged_df['close'].values,
+            'volume': merged_df['volume'].values,
+            'timestamp': merged_df.index.values
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi merge dữ liệu: {e}")
+        return existing_data if existing_data else new_data
+
+def load_and_update_historical_data(symbol, timeframe, force_full_update=False):
+    """Load dữ liệu hiện có và cập nhật với dữ liệu mới"""
+    try:
+        safe_symbol = symbol.replace('/', '_')
+        data_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_historical.csv")
+        
+        existing_data = None
+        latest_timestamp = None
+        
+        # Load dữ liệu hiện có nếu có
+        if os.path.exists(data_file) and not force_full_update:
+            try:
+                df = pd.read_csv(data_file, index_col='timestamp', parse_dates=True)
+                if len(df) > 0:
+                    existing_data = {
+                        'open': df['open'].values,
+                        'high': df['high'].values,
+                        'low': df['low'].values,
+                        'close': df['close'].values,
+                        'volume': df['volume'].values,
+                        'timestamp': df.index.values
+                    }
+                    latest_timestamp = get_latest_timestamp_from_data(existing_data)
+                    logger.info(f"📁 Loaded {len(df)} existing candles for {symbol} ({timeframe})")
+            except Exception as e:
+                logger.warning(f"⚠️ Lỗi khi load dữ liệu cũ cho {symbol} ({timeframe}): {e}")
+        
+        # Lấy dữ liệu mới
+        if force_full_update:
+            logger.info(f"🔄 Force full update for {symbol} ({timeframe})")
+            new_data = fetch_historical_data_for_ml(symbol, timeframe)
+        else:
+            new_data = fetch_incremental_data(symbol, timeframe, latest_timestamp)
+        
+        if new_data is None:
+            logger.warning(f"⚠️ Không thể lấy dữ liệu mới cho {symbol} ({timeframe})")
+            return existing_data
+        
+        # Merge dữ liệu
+        if existing_data:
+            merged_data = merge_historical_data(existing_data, new_data)
+            logger.info(f"🔄 Merged data: {len(existing_data['close'])} existing + {len(new_data['close'])} new = {len(merged_data['close'])} total")
+        else:
+            merged_data = new_data
+            logger.info(f"📊 New data: {len(merged_data['close'])} candles")
+        
+        # Lưu dữ liệu đã merge
+        if merged_data:
+            df_to_save = pd.DataFrame({
+                'timestamp': merged_data['timestamp'],
+                'open': merged_data['open'],
+                'high': merged_data['high'],
+                'low': merged_data['low'],
+                'close': merged_data['close'],
+                'volume': merged_data['volume']
+            })
+            
+            df_to_save.to_csv(data_file, index=False)
+            logger.info(f"💾 Saved {len(merged_data['close'])} candles to {data_file}")
+        
+        return merged_data
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi load và cập nhật dữ liệu cho {symbol} ({timeframe}): {e}")
+        return None
+
+def check_data_freshness(symbol, timeframe, max_age_hours=24):
+    """Kiểm tra độ mới của dữ liệu"""
+    try:
+        safe_symbol = symbol.replace('/', '_')
+        data_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_historical.csv")
+        
+        if not os.path.exists(data_file):
+            return False, "File không tồn tại"
+        
+        file_time = os.path.getmtime(data_file)
+        current_time = time.time()
+        age_hours = (current_time - file_time) / 3600
+        
+        if age_hours > max_age_hours:
+            return False, f"Dữ liệu cũ ({age_hours:.1f} giờ)"
+        
+        return True, f"Dữ liệu mới ({age_hours:.1f} giờ)"
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi kiểm tra độ mới dữ liệu: {e}")
+        return False, f"Lỗi: {e}"
+
+def get_data_statistics(symbol, timeframe):
+    """Lấy thống kê về dữ liệu"""
+    try:
+        safe_symbol = symbol.replace('/', '_')
+        data_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_historical.csv")
+        
+        if not os.path.exists(data_file):
+            return None
+        
+        df = pd.read_csv(data_file, index_col='timestamp', parse_dates=True)
+        
+        stats = {
+            'total_candles': len(df),
+            'date_range': {
+                'start': df.index.min().strftime('%Y-%m-%d %H:%M'),
+                'end': df.index.max().strftime('%Y-%m-%d %H:%M')
+            },
+            'file_size_mb': os.path.getsize(data_file) / (1024 * 1024),
+            'last_updated': datetime.fromtimestamp(os.path.getmtime(data_file)).strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi lấy thống kê dữ liệu: {e}")
+        return None
+
+def save_ml_prediction(symbol, timeframe, prediction_data, confidence, model_type):
+    """Lưu dự đoán của ML để đánh giá độ chính xác sau này"""
+    try:
+        # Xử lý symbol để tránh lỗi đường dẫn (thay / bằng _)
+        safe_symbol = symbol.replace('/', '_')
+        predictions_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_predictions.csv")
+        
+        # Lấy giá hiện tại làm entry price
+        current_price = prediction_data.get('current_price', 0)
+        
+        # Tạo dữ liệu dự đoán với thông tin TP/SL
+        prediction_record = {
+            'timestamp': pd.Timestamp.now(),
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'predicted_price': prediction_data.get('predicted_price', 0),
+            'predicted_direction': prediction_data.get('predicted_direction', 'unknown'),
+            'confidence': confidence,
+            'model_type': model_type,
+            'features_used': str(prediction_data.get('features', [])),
+            'model_accuracy': prediction_data.get('model_accuracy', 0),
+            'prediction_horizon': prediction_data.get('prediction_horizon', '1h'),
+            'status': 'pending',  # pending, verified, failed, expired
+            'entry_price': current_price,  # Giá vào lệnh
+            'target_profit_pct': prediction_data.get('target_profit_pct', 2.0),  # Mục tiêu lợi nhuận 2%
+            'stop_loss_pct': prediction_data.get('stop_loss_pct', 1.0),  # Cắt lỗ 1%
+            'max_hold_time': prediction_data.get('max_hold_time', '4h')  # Thời gian giữ lệnh tối đa
+        }
+        
+        # Load dữ liệu cũ hoặc tạo mới
+        if os.path.exists(predictions_file):
+            df = pd.read_csv(predictions_file)
+            df = pd.concat([df, pd.DataFrame([prediction_record])], ignore_index=True)
+        else:
+            df = pd.DataFrame([prediction_record])
+        
+        # Lưu file
+        df.to_csv(predictions_file, index=False)
+        
+        prediction_id = len(df)
+        logger.info(f"💾 Đã lưu dự đoán #{prediction_id} cho {symbol} ({timeframe}): {prediction_data.get('predicted_direction')} - Confidence: {confidence:.2%}")
+        
+        return prediction_id
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi lưu dự đoán ML: {e}")
+        return None
+
+def verify_ml_predictions(symbol, timeframe, current_price, current_timestamp):
+    """Xác minh dự đoán ML dựa trên xu hướng thực tế thay vì so sánh giá đơn giản"""
+    try:
+        # Xử lý symbol để tránh lỗi đường dẫn
+        safe_symbol = symbol.replace('/', '_')
+        predictions_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_predictions.csv")
+        
+        if not os.path.exists(predictions_file):
+            return None
+        
+        df = pd.read_csv(predictions_file)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # Chỉ xem xét các dự đoán pending và đã đến thời gian kiểm tra
+        df['prediction_horizon_hours'] = df['prediction_horizon'].map({'1h': 1, '4h': 4, '1d': 24, '1w': 168})
+        df['check_time'] = df['timestamp'] + pd.to_timedelta(df['prediction_horizon_hours'], unit='h')
+        
+        # Lọc dự đoán cần kiểm tra
+        pending_predictions = df[
+            (df['status'] == 'pending') & 
+            (df['check_time'] <= current_timestamp)
+        ].copy()
+        
+        if len(pending_predictions) == 0:
+            return None
+        
+        verified_count = 0
+        failed_count = 0
+        
+        for idx, pred in pending_predictions.iterrows():
+            predicted_direction = pred['predicted_direction']
+            entry_price = pred['entry_price']
+            target_profit_pct = pred.get('target_profit_pct', 2.0)  # Mặc định 2%
+            stop_loss_pct = pred.get('stop_loss_pct', 1.0)          # Mặc định 1%
+            
+            # Tính toán mức TP và SL
+            target_profit_price = entry_price * (1 + target_profit_pct / 100)
+            stop_loss_price = entry_price * (1 - stop_loss_pct / 100)
+            
+            # Lấy dữ liệu giá từ thời điểm dự đoán đến hiện tại
+            price_data = get_price_data_since_prediction(symbol, timeframe, pred['timestamp'], current_timestamp)
+            
+            if price_data is None or len(price_data) == 0:
+                logger.warning(f"⚠️ Không thể lấy dữ liệu giá cho dự đoán #{pred.name}")
+                continue
+            
+            # Xác định xu hướng thực tế và kết quả giao dịch
+            actual_result = determine_actual_trading_result(
+                price_data, 
+                predicted_direction, 
+                entry_price, 
+                target_profit_price, 
+                stop_loss_price
+            )
+            
+            # Cập nhật trạng thái dựa trên kết quả thực tế
+            if actual_result['result'] == 'profit':
+                new_status = 'verified'
+                accuracy = 1.0
+                verified_count += 1
+                logger.info(f"✅ Dự đoán #{pred.name} đúng: {predicted_direction} → Chạm TP {target_profit_pct}%")
+            elif actual_result['result'] == 'loss':
+                new_status = 'failed'
+                accuracy = 0.0
+                failed_count += 1
+                logger.warning(f"❌ Dự đoán #{pred.name} sai: {predicted_direction} → Chạm SL {stop_loss_pct}%")
+            else:  # sideways hoặc chưa chạm TP/SL
+                new_status = 'expired'
+                accuracy = 0.5  # Độ chính xác trung bình
+                logger.info(f"⏰ Dự đoán #{pred.name} hết hạn: {predicted_direction} → Không chạm TP/SL")
+            
+            # Cập nhật thông tin
+            df.loc[idx, 'status'] = new_status
+            df.loc[idx, 'actual_price'] = current_price
+            df.loc[idx, 'verification_time'] = current_timestamp
+            df.loc[idx, 'accuracy'] = accuracy
+            df.loc[idx, 'actual_result'] = actual_result['result']
+            df.loc[idx, 'max_price_reached'] = actual_result['max_price']
+            df.loc[idx, 'min_price_reached'] = actual_result['min_price']
+            df.loc[idx, 'price_movement_pct'] = actual_result['price_movement_pct']
+        
+        # Lưu cập nhật
+        df.to_csv(predictions_file, index=False)
+        
+        if verified_count > 0 or failed_count > 0:
+            logger.info(f"🔍 Đã xác minh {verified_count + failed_count} dự đoán: {verified_count} đúng, {failed_count} sai")
+        
+        return {
+            'verified': verified_count,
+            'failed': failed_count,
+            'expired': len(pending_predictions) - verified_count - failed_count,
+            'total_checked': len(pending_predictions)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi xác minh dự đoán ML: {e}")
+        return None
+
+def get_price_data_since_prediction(symbol, timeframe, prediction_time, current_time):
+    """Lấy dữ liệu giá từ thời điểm dự đoán đến hiện tại"""
+    try:
+        # Đọc dữ liệu lịch sử đã lưu
+        data_file = os.path.join(ML_DATA_DIR, f"{symbol}_{timeframe}_historical.csv")
+        if not os.path.exists(data_file):
+            return None
+        
+        df = pd.read_csv(data_file, index_col='timestamp', parse_dates=True)
+        
+        # Lọc dữ liệu từ thời điểm dự đoán đến hiện tại
+        mask = (df.index >= prediction_time) & (df.index <= current_time)
+        filtered_data = df[mask].copy()
+        
+        if len(filtered_data) == 0:
+            return None
+        
+        return filtered_data
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi lấy dữ liệu giá: {e}")
+        return None
+
+def determine_actual_trading_result(price_data, predicted_direction, entry_price, target_profit_price, stop_loss_price):
+    """Xác định kết quả giao dịch thực tế dựa trên dữ liệu giá"""
+    try:
+        if len(price_data) == 0:
+            return {
+                'result': 'unknown',
+                'max_price': entry_price,
+                'min_price': entry_price,
+                'price_movement_pct': 0.0
+            }
+        
+        # Lấy giá cao nhất và thấp nhất trong khoảng thời gian
+        max_price = price_data['high'].max()
+        min_price = price_data['low'].min()
+        
+        # Tính phần trăm thay đổi giá
+        price_movement_pct = ((max_price - min_price) / entry_price) * 100
+        
+        # Kiểm tra xem có chạm TP hoặc SL không
+        hit_tp = max_price >= target_profit_price
+        hit_sl = min_price <= stop_loss_price
+        
+        # Xác định kết quả
+        if hit_tp:
+            result = 'profit'
+        elif hit_sl:
+            result = 'loss'
+        else:
+            result = 'sideways'  # Không chạm TP/SL
+        
+        return {
+            'result': result,
+            'max_price': max_price,
+            'min_price': min_price,
+            'price_movement_pct': price_movement_pct,
+            'hit_tp': hit_tp,
+            'hit_sl': hit_sl
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi xác định kết quả giao dịch: {e}")
+        return {
+            'result': 'unknown',
+            'max_price': entry_price,
+            'min_price': entry_price,
+            'price_movement_pct': 0.0
+        }
+
+def get_prediction_accuracy_stats(symbol, timeframe, days_back=30):
+    """Lấy thống kê độ chính xác dự đoán ML"""
+    try:
+        # Xử lý symbol để tránh lỗi đường dẫn
+        safe_symbol = symbol.replace('/', '_')
+        predictions_file = os.path.join(ML_DATA_DIR, f"{safe_symbol}_{timeframe}_predictions.csv")
+        
+        if not os.path.exists(predictions_file):
+            return None
+        
+        df = pd.read_csv(predictions_file)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # Lọc dữ liệu theo thời gian
+        cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=days_back)
+        recent_df = df[df['timestamp'] >= cutoff_date]
+        
+        if len(recent_df) == 0:
+            return None
+        
+        # Tính toán thống kê
+        total_predictions = len(recent_df)
+        verified_predictions = recent_df[recent_df['status'] == 'verified']
+        failed_predictions = recent_df[recent_df['status'] == 'failed']
+        expired_predictions = recent_df[recent_df['status'] == 'expired']
+        
+        # Tính độ chính xác (chỉ tính verified vs failed, không tính expired)
+        completed_predictions = len(verified_predictions) + len(failed_predictions)
+        accuracy = len(verified_predictions) / completed_predictions if completed_predictions > 0 else 0
+        
+        # Thống kê theo model type - sử dụng confidence thay vì accuracy
+        model_stats = recent_df.groupby('model_type').agg({
+            'confidence': ['count', 'mean', 'sum']
+        }).round(3)
+        
+        # Thống kê theo confidence level
+        confidence_bins = [0, 0.5, 0.7, 0.9, 1.0]
+        confidence_labels = ['Low (0-50%)', 'Medium (50-70%)', 'High (70-90%)', 'Very High (90-100%)']
+        recent_df['confidence_bin'] = pd.cut(recent_df['confidence'], bins=confidence_bins, labels=confidence_labels)
+        
+        confidence_stats = recent_df.groupby('confidence_bin').agg({
+            'confidence': ['count', 'mean']
+        }).round(3)
+        
+        return {
+            'total_predictions': total_predictions,
+            'verified_predictions': len(verified_predictions),
+            'failed_predictions': len(failed_predictions),
+            'expired_predictions': len(expired_predictions),
+            'completed_predictions': completed_predictions,
+            'overall_accuracy': accuracy,
+            'model_type_stats': model_stats.to_dict(),
+            'confidence_stats': confidence_stats.to_dict(),
+            'period_days': days_back
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi lấy thống kê độ chính xác: {e}")
+        return None
+
+def adjust_ml_algorithm_based_on_accuracy(symbol, timeframe, current_prediction):
+    """Điều chỉnh thuật toán ML dựa trên độ chính xác lịch sử"""
+    try:
+        accuracy_stats = get_prediction_accuracy_stats(symbol, timeframe, days_back=7)
+        
+        if not accuracy_stats:
+            return current_prediction
+        
+        overall_accuracy = accuracy_stats['overall_accuracy']
+        confidence = current_prediction.get('confidence', 0.5)
+        
+        # Điều chỉnh confidence dựa trên độ chính xác
+        if overall_accuracy > 0.7:  # Độ chính xác cao
+            adjusted_confidence = min(confidence * 1.1, 1.0)
+            adjustment_reason = f"Tăng confidence do độ chính xác cao ({overall_accuracy:.1%})"
+        elif overall_accuracy < 0.4:  # Độ chính xác thấp
+            adjusted_confidence = max(confidence * 0.8, 0.1)
+            adjustment_reason = f"Giảm confidence do độ chính xác thấp ({overall_accuracy:.1%})"
+        else:
+            adjusted_confidence = confidence
+            adjustment_reason = f"Giữ nguyên confidence - độ chính xác trung bình ({overall_accuracy:.1%})"
+        
+        # Điều chỉnh prediction dựa trên model type performance
+        model_type = current_prediction.get('model_type', 'unknown')
+        if model_type in accuracy_stats.get('model_type_stats', {}):
+            model_confidence = accuracy_stats['model_type_stats'][model_type]['confidence']['mean']
+            if model_confidence < 0.5:
+                # Model này có hiệu suất kém, giảm confidence thêm
+                adjusted_confidence *= 0.9
+                adjustment_reason += f", giảm thêm do model {model_type} kém ({model_confidence:.1%})"
+        
+        # Cập nhật prediction
+        adjusted_prediction = current_prediction.copy()
+        adjusted_prediction['confidence'] = adjusted_confidence
+        adjusted_prediction['original_confidence'] = confidence
+        adjusted_prediction['adjustment_reason'] = adjustment_reason
+        adjusted_prediction['historical_accuracy'] = overall_accuracy
+        
+        logger.info(f"🔧 Điều chỉnh thuật toán ML cho {symbol} ({timeframe}): {confidence:.1%} → {adjusted_confidence:.1%}")
+        logger.info(f"📊 Lý do: {adjustment_reason}")
+        
+        return adjusted_prediction
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi điều chỉnh thuật toán ML: {e}")
+        return current_prediction
+
 def main():
     logger.info("Bắt đầu phân tích xu hướng ngắn hạn với ML và Convergence Analysis...")
     
@@ -3867,7 +4698,7 @@ def main():
     # Hiển thị thông tin ML features
     display_ml_features_info()
     
-    # Kiểm tra trạng thái ML training
+    # Kiểm tra trạng thái ML training và dữ liệu
     ml_status = get_ml_training_status()
     if ml_status:
         print(f"\n📊 ML Training Status:")
@@ -3875,16 +4706,36 @@ def main():
         print(f"❌ Models missing: {len(ml_status['models_missing'])}")
         print(f"📁 Data files: {len(ml_status['data_files'])}")
     
-    # Train ML models một lần (không có scheduler)
-    logger.info("🤖 Bắt đầu train ML models...")
+    # Hiển thị tóm tắt dữ liệu
+    display_data_update_summary()
+    
+    # Train ML models với incremental data update
+    logger.info("🤖 Bắt đầu train ML models với incremental data update...")
     symbols_to_train = ['BTC/USDT', 'ETH/USDT']
     timeframes_to_train = ML_TIMEFRAMES
+    
+    # Hiển thị thống kê dữ liệu trước khi train
+    logger.info("📊 Thống kê dữ liệu hiện tại:")
+    for symbol in symbols_to_train:
+        for timeframe in timeframes_to_train:
+            stats = get_data_statistics(symbol, timeframe)
+            if stats:
+                logger.info(f"  {symbol} ({timeframe}): {stats['total_candles']} candles, {stats['file_size_mb']:.2f}MB, {stats['date_range']['start']} - {stats['date_range']['end']}")
+            else:
+                logger.info(f"  {symbol} ({timeframe}): Chưa có dữ liệu")
     
     for symbol in symbols_to_train:
         for timeframe in timeframes_to_train:
             logger.info(f"🔄 Training ML models cho {symbol} ({timeframe})...")
             try:
-                train_ml_models(symbol, timeframe)
+                # Kiểm tra xem có cần force full update không
+                is_fresh, freshness_msg = check_data_freshness(symbol, timeframe, max_age_hours=48)
+                force_full = not is_fresh
+                
+                if force_full:
+                    logger.info(f"🔄 Force full update cho {symbol} ({timeframe}) - {freshness_msg}")
+                
+                train_ml_models(symbol, timeframe, force_full_update=force_full)
                 logger.info(f"✅ Đã train thành công cho {symbol} ({timeframe})")
             except Exception as e:
                 logger.error(f"❌ Lỗi train {symbol} ({timeframe}): {e}")
@@ -3904,11 +4755,27 @@ def main():
 
 
 
-    # Hiển thị thống kê độ chính xác nếu có
+    # Hiển thị thống kê độ chính xác ML
+    logger.info("📊 Thống kê độ chính xác ML:")
+    for symbol in ['BTC_USDT', 'ETH_USDT']:
+        for timeframe in ML_TIMEFRAMES:
+            accuracy_stats = get_prediction_accuracy_stats(symbol, timeframe, days_back=7)
+            if accuracy_stats:
+                verified = accuracy_stats['verified_predictions']
+                failed = accuracy_stats['failed_predictions']
+                expired = accuracy_stats['expired_predictions']
+                total = accuracy_stats['total_predictions']
+                accuracy = accuracy_stats['overall_accuracy']
+                
+                logger.info(f"  {symbol} ({timeframe}): {accuracy:.1%} ({verified} đúng, {failed} sai, {expired} hết hạn) trong 7 ngày qua")
+            else:
+                logger.info(f"  {symbol} ({timeframe}): Chưa có dữ liệu độ chính xác")
+    
+    # Hiển thị thống kê độ chính xác tổng thể nếu có
     accuracy_data = get_prediction_accuracy_data()
     if accuracy_data and accuracy_data.get('overall', {}).get('total_predictions', 0) > 0:
         overall = accuracy_data['overall']
-        logger.info(f"📈 Thống kê độ chính xác: {overall['accuracy']:.1%} ({overall['accurate_predictions']}/{overall['total_predictions']})")
+        logger.info(f"📈 Thống kê độ chính xác tổng thể: {overall['accuracy']:.1%} ({overall['accurate_predictions']}/{overall['total_predictions']})")
     
     # Test Telegram trước
     logger.info("🧪 TESTING TELEGRAM CONNECTION...")
@@ -3933,6 +4800,10 @@ def main():
         # Gửi thông báo không có tín hiệu
         no_signal_report = "🤖 <b>BÁO CÁO PHÂN TÍCH</b>\n\n📊 Không có tín hiệu mạnh nào được phát hiện trong thị trường hiện tại.\n\n💡 Điều này có thể do:\n• Thị trường đang sideway/consolidation\n• Các chỉ số chưa đạt ngưỡng tín hiệu\n• Cần chờ thêm thời gian để có tín hiệu rõ ràng\n\n⏰ Thời gian: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         send_telegram_message(no_signal_report)
+    
+    # Kiểm tra tình trạng dữ liệu lịch sử (không xóa, chỉ kiểm tra)
+    logger.info("🧹 Kiểm tra tình trạng dữ liệu lịch sử...")
+    cleanup_old_data_files()
     
     logger.info("🏁 Hoàn thành phân tích!")
 

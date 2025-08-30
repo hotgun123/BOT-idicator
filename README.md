@@ -17,6 +17,9 @@ Hệ thống phân tích và dự đoán xu hướng thị trường tự độn
 - **Auto-training**: Tự động train mô hình mỗi 24 giờ
 - **Performance Tracking**: Cross-validation và accuracy monitoring
 - **Ensemble Prediction**: Kết hợp dự đoán từ nhiều mô hình
+- **🎯 TP/SL System**: Hệ thống Take Profit/Stop Loss thông minh
+- **📊 Continuous Learning**: Tự động cải thiện độ chính xác theo thời gian
+- **🔍 Prediction Verification**: Xác minh dự đoán dựa trên kết quả thực tế
 
 ### 🎯 **Convergence Analysis**
 - **Multi-period Analysis**: 5, 10, 20, 50 periods
@@ -60,6 +63,18 @@ Bot sẽ chạy tự động trên GitHub và gửi kết quả về Telegram m�
 4. Bot sẽ tự động chạy mỗi 2 giờ và gửi kết quả về Telegram
 
 **Xem hướng dẫn chi tiết:** [GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md)
+
+### 🧪 **Test hệ thống**
+```bash
+# Test hệ thống TP/SL mới
+python test_tp_sl_system.py
+
+# Test hệ thống ML learning
+python test_ml_learning_system.py
+
+# Test incremental data loading
+python test_incremental_data.py
+```
 
 ### 💻 **Option 2: Local Installation**
 
@@ -188,6 +203,28 @@ ML_MIN_SAMPLES = 2000          # Tăng số mẫu tối thiểu
 CONVERGENCE_THRESHOLD = 0.9    # Tăng ngưỡng hội tụ
 CONVERGENCE_LOOKBACK_PERIODS = [10, 20, 50, 100]  # Thêm periods
 ```
+
+## 🎯 **Hệ thống TP/SL thông minh**
+
+### **Vấn đề đã giải quyết**
+Trước đây, ML chỉ đưa ra xu hướng (up/down) mà không có TP/SL cụ thể, khiến việc xác định dự đoán đúng/sai trở nên mơ hồ.
+
+### **Giải pháp mới**
+- **🎯 TP/SL cụ thể**: TP: +2%, SL: -1%
+- **📊 Xác minh thực tế**: Dựa trên việc giá chạm TP hay SL trước
+- **🔄 Học tập liên tục**: AI tự động cải thiện dựa trên kết quả thực tế
+- **⏰ Quản lý thời gian**: Tự động đóng lệnh khi hết thời gian
+
+### **Cách hoạt động**
+```
+1. ML dự đoán xu hướng → Lưu với TP/SL
+2. Thời gian trôi qua → Giá biến động
+3. Kiểm tra TP/SL → Chạm TP trước hay SL trước?
+4. Cập nhật kết quả → verified/failed/expired
+5. Tính toán độ chính xác → Dựa trên kết quả thực tế
+```
+
+**Xem chi tiết:** [README_TP_SL_SYSTEM.md](README_TP_SL_SYSTEM.md)
 
 ## 📊 Performance Metrics
 

@@ -43,7 +43,8 @@ Hệ thống phân tích và dự đoán xu hướng thị trường tự độn
 
 ### 📱 **Real-time Monitoring**
 - **Telegram Integration**: Báo cáo tự động qua Telegram
-- **Multi-timeframe**: 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w
+- **Technical Analysis**: 1h, 4h, 8h, 1d (4 timeframes chính)
+- **ML Training**: 1h, 2h, 4h, 6h, 8h, 12h, 1d (7 timeframes đầy đủ)
 - **Multi-asset**: Crypto (BTC, ETH, BNB), Vàng, Dầu
 - **Performance Tracking**: Theo dõi độ chính xác dự đoán
 
@@ -166,7 +167,7 @@ BOT-idicator/
 ⏰ 2024-01-15 14:30:00
 
 ✅ BTC/USDT: Long (Đồng thuận: 75.2%)
-📊 Timeframes: 1h, 4h, 1d
+📊 Timeframes: 1h, 4h, 8h, 1d
 
 🤖 MACHINE LEARNING PREDICTION:
   • Model: xgboost

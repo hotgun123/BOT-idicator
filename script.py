@@ -107,7 +107,7 @@ exness_exchange = None
 # Cấu hình
 # Chỉ phân tích crypto; tạm thời bỏ vàng và dầu do nguồn dữ liệu không ổn định
 SYMBOLS = ['BTC/USDT', 'ETH/USDT']  # Bỏ BNB theo yêu cầu của user
-TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w']
+TIMEFRAMES = ['1h', '4h', '8h', '1d']  # Chỉ sử dụng 4 timeframe chính
 ML_TIMEFRAMES = ['1h', '2h', '4h', '6h', '8h', '12h', '1d']  # Timeframes cho ML training
 CANDLE_LIMIT = 1000
 SIGNAL_THRESHOLD = 0.3 # Ngưỡng tối thiểu để một timeframe được coi là có tín hiệu hợp lệ
@@ -124,6 +124,70 @@ PREDICTION_HISTORY_FILE = "prediction_history.json"
 PREDICTION_ACCURACY_FILE = "prediction_accuracy.json"
 PREDICTION_UPDATE_INTERVAL = 3600  # Cập nhật kết quả thực tế mỗi giờ
 PREDICTION_RETENTION_DAYS = 30  # Giữ dữ liệu dự đoán trong 30 ngày
+
+# === QUY CHUẨN TRADING SYSTEM - TIÊU CHUẨN MỚI ===
+# Cấu hình cho hệ thống giao dịch đạt tiêu chuẩn
+TRADING_SYSTEM_CONFIG = {
+    'MIN_WIN_RATE': 0.6,  # Tỷ lệ thắng tối thiểu 60% (win probability > 1)
+    'MIN_RR_RATIO': 1.0,  # Risk/Reward ratio tối thiểu 1:1
+    'TARGET_RR_RATIO': 2.0,  # Mục tiêu RR ratio 1:2
+    'MAX_RISK_PER_TRADE': 0.02,  # Rủi ro tối đa 2% mỗi lệnh
+    'POSITION_SIZING_ENABLED': True,  # Bật tính toán position size
+    'DYNAMIC_SL_TP': True,  # SL/TP động dựa trên volatility
+    'TREND_CONFIRMATION_REQUIRED': True,  # Yêu cầu xác nhận xu hướng
+    'MULTI_TIMEFRAME_CONFIRMATION': True,  # Xác nhận đa timeframe
+    'VOLUME_CONFIRMATION_REQUIRED': True,  # Yêu cầu xác nhận volume
+}
+
+# Cấu hình cho validation và quality control
+TRADE_QUALITY_CONFIG = {
+    'MIN_SIGNAL_STRENGTH': 0.7,  # Độ mạnh tín hiệu tối thiểu
+    'MIN_CONSENSUS_RATIO': 0.6,  # Tỷ lệ đồng thuận tối thiểu
+    'MIN_INDICATOR_AGREEMENT': 0.6,  # Tỷ lệ đồng thuận chỉ báo tối thiểu
+    'MAX_OPPOSING_SIGNALS': 2,  # Số tín hiệu ngược tối đa cho phép
+    'REQUIRED_TIMEFRAMES': ['1h', '4h'],  # Timeframes bắt buộc phải đồng thuận
+}
+
+# Cấu hình cho risk management
+RISK_MANAGEMENT_CONFIG = {
+    'ATR_MULTIPLIER_SL': 1.5,  # Hệ số ATR cho Stop Loss
+    'ATR_MULTIPLIER_TP': 3.0,  # Hệ số ATR cho Take Profit
+    'SUPPORT_RESISTANCE_BUFFER': 0.005,  # Buffer 0.5% cho S/R levels
+    'VOLATILITY_ADJUSTMENT': True,  # Điều chỉnh SL/TP theo volatility
+    'BREAKOUT_CONFIRMATION': True,  # Xác nhận breakout trước khi vào lệnh
+}
+
+# === QUY CHUẨN TRADING SYSTEM - TIÊU CHUẨN MỚI ===
+# Cấu hình cho hệ thống giao dịch đạt tiêu chuẩn
+TRADING_SYSTEM_CONFIG = {
+    'MIN_WIN_RATE': 0.6,  # Tỷ lệ thắng tối thiểu 60% (win probability > 1)
+    'MIN_RR_RATIO': 1.0,  # Risk/Reward ratio tối thiểu 1:1
+    'TARGET_RR_RATIO': 2.0,  # Mục tiêu RR ratio 1:2
+    'MAX_RISK_PER_TRADE': 0.02,  # Rủi ro tối đa 2% mỗi lệnh
+    'POSITION_SIZING_ENABLED': True,  # Bật tính toán position size
+    'DYNAMIC_SL_TP': True,  # SL/TP động dựa trên volatility
+    'TREND_CONFIRMATION_REQUIRED': True,  # Yêu cầu xác nhận xu hướng
+    'MULTI_TIMEFRAME_CONFIRMATION': True,  # Xác nhận đa timeframe
+    'VOLUME_CONFIRMATION_REQUIRED': True,  # Yêu cầu xác nhận volume
+}
+
+# Cấu hình cho validation và quality control
+TRADE_QUALITY_CONFIG = {
+    'MIN_SIGNAL_STRENGTH': 0.7,  # Độ mạnh tín hiệu tối thiểu
+    'MIN_CONSENSUS_RATIO': 0.6,  # Tỷ lệ đồng thuận tối thiểu
+    'MIN_INDICATOR_AGREEMENT': 0.6,  # Tỷ lệ đồng thuận chỉ báo tối thiểu
+    'MAX_OPPOSING_SIGNALS': 2,  # Số tín hiệu ngược tối đa cho phép
+    'REQUIRED_TIMEFRAMES': ['1h', '4h'],  # Timeframes bắt buộc phải đồng thuận
+}
+
+# Cấu hình cho risk management
+RISK_MANAGEMENT_CONFIG = {
+    'ATR_MULTIPLIER_SL': 1.5,  # Hệ số ATR cho Stop Loss
+    'ATR_MULTIPLIER_TP': 3.0,  # Hệ số ATR cho Take Profit
+    'SUPPORT_RESISTANCE_BUFFER': 0.005,  # Buffer 0.5% cho S/R levels
+    'VOLATILITY_ADJUSTMENT': True,  # Điều chỉnh SL/TP theo volatility
+    'BREAKOUT_CONFIRMATION': True,  # Xác nhận breakout trước khi vào lệnh
+}
 
 # Cấu hình Machine Learning
 ML_MODELS_DIR = "ml_models"
@@ -191,7 +255,9 @@ def create_ml_features(data, symbol, timeframe):
         df['bb_lower'] = ta.volatility.bollinger_lband(df['close'])
         df['bb_middle'] = ta.volatility.bollinger_mavg(df['close'])
         df['ema_20'] = ta.trend.ema_indicator(df['close'], window=20)
+        df['ema_34'] = ta.trend.ema_indicator(df['close'], window=34)  # Elliott Wave main waves
         df['ema_50'] = ta.trend.ema_indicator(df['close'], window=50)
+        df['ema_89'] = ta.trend.ema_indicator(df['close'], window=89)  # Elliott Wave main waves
         df['sma_20'] = ta.trend.sma_indicator(df['close'], window=20)
         df['sma_50'] = ta.trend.sma_indicator(df['close'], window=50)
         df['stoch_k'] = ta.momentum.stoch(df['high'], df['low'], df['close'])
@@ -1186,17 +1252,292 @@ def fetch_ohlcv(symbol, timeframe, limit):
     return None
 
 def calculate_fibonacci_levels(highs, lows):
-    """Tính các mức Fibonacci Retracement"""
-    max_price = max(highs[-50:])
-    min_price = min(lows[-50:])
-    diff = max_price - min_price
-    levels = {
-        '23.6%': max_price - 0.236 * diff,
-        '38.2%': max_price - 0.382 * diff,
-        '50%': max_price - 0.5 * diff,
-        '61.8%': max_price - 0.618 * diff
-    }
-    return levels
+    """Tính các mức Fibonacci Retracement theo phương pháp trading Việt Nam"""
+    try:
+        max_price = max(highs[-50:])
+        min_price = min(lows[-50:])
+        diff = max_price - min_price
+        
+        # Fibonacci Retracement levels theo chuẩn trading Việt Nam
+        levels = {
+            '0%': max_price,
+            '23.6%': max_price - 0.236 * diff,
+            '38.2%': max_price - 0.382 * diff,
+            '50%': max_price - 0.5 * diff,
+            '61.8%': max_price - 0.618 * diff,
+            '76.4%': max_price - 0.764 * diff,
+            '100%': min_price
+        }
+        return levels
+    except Exception as e:
+        logger.error(f"Lỗi tính Fibonacci levels: {e}")
+        return {}
+
+def calculate_fibonacci_extension(highs, lows):
+    """Tính các mức Fibonacci Extension cho target prediction"""
+    try:
+        max_price = max(highs[-50:])
+        min_price = min(lows[-50:])
+        diff = max_price - min_price
+        
+        # Fibonacci Extension levels (dùng khi xu thế cấp 1 tiếp diễn)
+        extension_levels = {
+            '61.8%': max_price + 0.618 * diff,
+            '100%': max_price + diff,
+            '161.8%': max_price + 1.618 * diff,
+            '261.8%': max_price + 2.618 * diff,
+            '361.8%': max_price + 3.618 * diff,
+            '461.8%': max_price + 4.618 * diff
+        }
+        return extension_levels
+    except Exception as e:
+        logger.error(f"Lỗi tính Fibonacci Extension: {e}")
+        return {}
+
+def analyze_fibonacci_psychology(current_price, fib_levels, price_range):
+    """Phân tích tâm lý thị trường dựa trên Fibonacci"""
+    try:
+        psychology_analysis = {
+            'market_sentiment': 'neutral',
+            'buyer_strength': 0.5,
+            'seller_strength': 0.5,
+            'key_level': None,
+            'analysis': ''
+        }
+        
+        # Xác định vùng Fibonacci hiện tại
+        if current_price >= fib_levels.get('0%', 0):
+            psychology_analysis['market_sentiment'] = 'strong_bullish'
+            psychology_analysis['buyer_strength'] = 1.0
+            psychology_analysis['analysis'] = 'Giá vượt đỉnh - phe mua rất mạnh'
+        elif current_price <= fib_levels.get('100%', 0):
+            psychology_analysis['market_sentiment'] = 'strong_bearish'
+            psychology_analysis['seller_strength'] = 1.0
+            psychology_analysis['analysis'] = 'Giá chạm đáy - phe bán rất mạnh'
+        elif current_price <= fib_levels.get('23.6%', 0):
+            psychology_analysis['market_sentiment'] = 'bullish'
+            psychology_analysis['buyer_strength'] = 0.8
+            psychology_analysis['key_level'] = '23.6%'
+            psychology_analysis['analysis'] = 'Hồi về 23.6% - phe mua vẫn mạnh'
+        elif current_price <= fib_levels.get('38.2%', 0):
+            psychology_analysis['market_sentiment'] = 'slightly_bullish'
+            psychology_analysis['buyer_strength'] = 0.6
+            psychology_analysis['key_level'] = '38.2%'
+            psychology_analysis['analysis'] = 'Hồi về 38.2% - phe mua hơi yếu'
+        elif current_price <= fib_levels.get('50%', 0):
+            psychology_analysis['market_sentiment'] = 'neutral'
+            psychology_analysis['buyer_strength'] = 0.5
+            psychology_analysis['key_level'] = '50%'
+            psychology_analysis['analysis'] = 'Hồi về 50% - cân bằng mua bán'
+        elif current_price <= fib_levels.get('61.8%', 0):
+            psychology_analysis['market_sentiment'] = 'slightly_bearish'
+            psychology_analysis['buyer_strength'] = 0.4
+            psychology_analysis['key_level'] = '61.8%'
+            psychology_analysis['analysis'] = 'Hồi về 61.8% - phe mua yếu sinh lý'
+        elif current_price <= fib_levels.get('76.4%', 0):
+            psychology_analysis['market_sentiment'] = 'bearish'
+            psychology_analysis['buyer_strength'] = 0.2
+            psychology_analysis['key_level'] = '76.4%'
+            psychology_analysis['analysis'] = 'Hồi về 76.4% - phe mua rất yếu'
+        
+        return psychology_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phân tích tâm lý Fibonacci: {e}")
+        return {'market_sentiment': 'neutral', 'buyer_strength': 0.5, 'seller_strength': 0.5, 'key_level': None, 'analysis': ''}
+
+def analyze_ema_34_89_trend(close, ema34, ema89, current_price):
+    """Phân tích xu hướng dựa trên EMA 34 và EMA 89 theo Elliott Wave theory"""
+    try:
+        trend_analysis = {
+            'trend_direction': 'neutral',
+            'trend_strength': 0.5,
+            'value_zone': False,
+            'entry_signal': 'hold',
+            'analysis': ''
+        }
+        
+        current_ema34 = ema34.iloc[-1] if hasattr(ema34, 'iloc') else ema34[-1]
+        current_ema89 = ema89.iloc[-1] if hasattr(ema89, 'iloc') else ema89[-1]
+        
+        # Xác định xu hướng chính
+        if current_price > current_ema34 and current_ema34 > current_ema89:
+            trend_analysis['trend_direction'] = 'bullish'
+            trend_analysis['trend_strength'] = 0.8
+            trend_analysis['entry_signal'] = 'buy'
+            trend_analysis['analysis'] = 'Xu hướng tăng mạnh - giá trên EMA34, EMA34 trên EMA89'
+        elif current_price < current_ema34 and current_ema34 < current_ema89:
+            trend_analysis['trend_direction'] = 'bearish'
+            trend_analysis['trend_strength'] = 0.8
+            trend_analysis['entry_signal'] = 'sell'
+            trend_analysis['analysis'] = 'Xu hướng giảm mạnh - giá dưới EMA34, EMA34 dưới EMA89'
+        elif current_price > current_ema34 and current_ema34 < current_ema89:
+            trend_analysis['trend_direction'] = 'mixed'
+            trend_analysis['trend_strength'] = 0.4
+            trend_analysis['entry_signal'] = 'hold'
+            trend_analysis['analysis'] = 'Tín hiệu hỗn hợp - cần xác nhận thêm'
+        elif current_price < current_ema34 and current_ema34 > current_ema89:
+            trend_analysis['trend_direction'] = 'mixed'
+            trend_analysis['trend_strength'] = 0.4
+            trend_analysis['entry_signal'] = 'hold'
+            trend_analysis['analysis'] = 'Tín hiệu hỗn hợp - cần xác nhận thêm'
+        
+        # Phân tích vùng giá trị (value zone)
+        ema_distance = abs(current_price - current_ema34) / current_ema34
+        if ema_distance > 0.02:  # Giá cách EMA34 hơn 2%
+            trend_analysis['value_zone'] = True
+            trend_analysis['analysis'] += ' - Vùng giá trị: giá xa EMA34'
+        
+        return trend_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phân tích EMA 34/89: {e}")
+        return {'trend_direction': 'neutral', 'trend_strength': 0.5, 'value_zone': False, 'entry_signal': 'hold', 'analysis': ''}
+
+def detect_ema_breakout_pattern(close, ema34, ema89):
+    """Phát hiện mô hình breakout EMA theo phương pháp trading Việt Nam"""
+    try:
+        breakout_analysis = {
+            'pattern': 'none',
+            'signal': 'hold',
+            'strength': 0.0,
+            'analysis': ''
+        }
+        
+        if len(close) < 5:
+            return breakout_analysis
+        
+        # Lấy 5 giá trị gần nhất
+        recent_closes = close.iloc[-5:] if hasattr(close, 'iloc') else close[-5:]
+        recent_ema34 = ema34.iloc[-5:] if hasattr(ema34, 'iloc') else ema34[-5:]
+        recent_ema89 = ema89.iloc[-5:] if hasattr(ema89, 'iloc') else ema89[-5:]
+        
+        current_close = recent_closes.iloc[-1] if hasattr(recent_closes, 'iloc') else recent_closes[-1]
+        current_ema34 = recent_ema34.iloc[-1] if hasattr(recent_ema34, 'iloc') else recent_ema34[-1]
+        current_ema89 = recent_ema89.iloc[-1] if hasattr(recent_ema89, 'iloc') else recent_ema89[-1]
+        
+        # Kiểm tra mô hình breakout tăng
+        if (recent_closes.iloc[-2] if hasattr(recent_closes, 'iloc') else recent_closes[-2]) < (recent_ema34.iloc[-2] if hasattr(recent_ema34, 'iloc') else recent_ema34[-2]) and \
+           current_close > current_ema34:
+            breakout_analysis['pattern'] = 'bullish_breakout'
+            breakout_analysis['signal'] = 'buy'
+            breakout_analysis['strength'] = 0.8
+            breakout_analysis['analysis'] = 'Breakout tăng qua EMA34 - tín hiệu mua mạnh'
+        
+        # Kiểm tra mô hình breakout giảm
+        elif (recent_closes.iloc[-2] if hasattr(recent_closes, 'iloc') else recent_closes[-2]) > (recent_ema34.iloc[-2] if hasattr(recent_ema34, 'iloc') else recent_ema34[-2]) and \
+             current_close < current_ema34:
+            breakout_analysis['pattern'] = 'bearish_breakout'
+            breakout_analysis['signal'] = 'sell'
+            breakout_analysis['strength'] = 0.8
+            breakout_analysis['analysis'] = 'Breakout giảm qua EMA34 - tín hiệu bán mạnh'
+        
+        # Kiểm tra mô hình pullback (vòng về EMA)
+        elif abs(current_close - current_ema34) / current_ema34 < 0.005:  # Giá gần EMA34
+            breakout_analysis['pattern'] = 'pullback'
+            breakout_analysis['signal'] = 'hold'
+            breakout_analysis['strength'] = 0.6
+            breakout_analysis['analysis'] = 'Giá vòng về EMA34 - chờ xác nhận'
+        
+        return breakout_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phát hiện mô hình breakout EMA: {e}")
+        return {'pattern': 'none', 'signal': 'hold', 'strength': 0.0, 'analysis': ''}
+
+def analyze_ma_value_zones(close, ema34, ema89, current_price):
+    """Phân tích vùng giá trị và hành vi giá theo phương pháp trading Việt Nam"""
+    try:
+        value_zone_analysis = {
+            'zone_type': 'neutral',
+            'distance_from_ma': 0.0,
+            'price_behavior': 'normal',
+            'entry_opportunity': 'none',
+            'analysis': ''
+        }
+        
+        current_ema34 = ema34.iloc[-1] if hasattr(ema34, 'iloc') else ema34[-1]
+        current_ema89 = ema89.iloc[-1] if hasattr(ema89, 'iloc') else ema89[-1]
+        
+        # Tính khoảng cách từ giá đến EMA34
+        distance_percent = abs(current_price - current_ema34) / current_ema34
+        value_zone_analysis['distance_from_ma'] = distance_percent
+        
+        # Xác định loại vùng giá trị
+        if distance_percent < 0.005:  # Giá gần EMA34 (< 0.5%)
+            value_zone_analysis['zone_type'] = 'value_zone'
+            value_zone_analysis['entry_opportunity'] = 'high'
+            value_zone_analysis['analysis'] = 'Vùng giá trị - cơ hội entry tốt'
+        elif distance_percent < 0.02:  # Giá gần EMA34 (< 2%)
+            value_zone_analysis['zone_type'] = 'near_value'
+            value_zone_analysis['entry_opportunity'] = 'medium'
+            value_zone_analysis['analysis'] = 'Gần vùng giá trị - cơ hội entry trung bình'
+        elif distance_percent > 0.05:  # Giá xa EMA34 (> 5%)
+            value_zone_analysis['zone_type'] = 'extreme'
+            value_zone_analysis['entry_opportunity'] = 'low'
+            value_zone_analysis['analysis'] = 'Giá xa EMA34 - cơ hội entry thấp'
+        
+        # Phân tích hành vi giá
+        if len(close) >= 3:
+            recent_closes = close.iloc[-3:] if hasattr(close, 'iloc') else close[-3:]
+            recent_ema34 = ema34.iloc[-3:] if hasattr(ema34, 'iloc') else ema34[-3:]
+            
+            # Kiểm tra giá có vòng về EMA không
+            if (recent_closes.iloc[-2] if hasattr(recent_closes, 'iloc') else recent_closes[-2]) < (recent_ema34.iloc[-2] if hasattr(recent_ema34, 'iloc') else recent_ema34[-2]) and \
+               current_price > current_ema34:
+                value_zone_analysis['price_behavior'] = 'pullback_bullish'
+                value_zone_analysis['analysis'] += ' - Giá vòng lên qua EMA34'
+            elif (recent_closes.iloc[-2] if hasattr(recent_closes, 'iloc') else recent_closes[-2]) > (recent_ema34.iloc[-2] if hasattr(recent_ema34, 'iloc') else recent_ema34[-2]) and \
+                 current_price < current_ema34:
+                value_zone_analysis['price_behavior'] = 'pullback_bearish'
+                value_zone_analysis['analysis'] += ' - Giá vòng xuống qua EMA34'
+        
+        return value_zone_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phân tích vùng giá trị MA: {e}")
+        return {'zone_type': 'neutral', 'distance_from_ma': 0.0, 'price_behavior': 'normal', 'entry_opportunity': 'none', 'analysis': ''}
+
+def detect_ma_sideways_market(close, ema34, ema89):
+    """Phát hiện thị trường đi ngang theo phương pháp trading Việt Nam"""
+    try:
+        sideways_analysis = {
+            'is_sideways': False,
+            'sideways_strength': 0.0,
+            'recommendation': 'trade',
+            'analysis': ''
+        }
+        
+        if len(close) < 20:
+            return sideways_analysis
+        
+        # Lấy 20 giá trị gần nhất
+        recent_closes = close.iloc[-20:] if hasattr(close, 'iloc') else close[-20:]
+        recent_ema34 = ema34.iloc[-20:] if hasattr(ema34, 'iloc') else ema34[-20:]
+        recent_ema89 = ema89.iloc[-20:] if hasattr(ema89, 'iloc') else ema89[-20:]
+        
+        # Tính độ biến động của EMA34
+        ema34_volatility = np.std(recent_ema34) / np.mean(recent_ema34)
+        
+        # Tính số lần giá cắt qua EMA34
+        crossovers = 0
+        for i in range(1, len(recent_closes)):
+            prev_close = recent_closes.iloc[i-1] if hasattr(recent_closes, 'iloc') else recent_closes[i-1]
+            curr_close = recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]
+            prev_ema34 = recent_ema34.iloc[i-1] if hasattr(recent_ema34, 'iloc') else recent_ema34[i-1]
+            curr_ema34 = recent_ema34.iloc[i] if hasattr(recent_ema34, 'iloc') else recent_ema34[i]
+            
+            if (prev_close < prev_ema34 and curr_close > curr_ema34) or \
+               (prev_close > prev_ema34 and curr_close < curr_ema34):
+                crossovers += 1
+        
+        # Xác định thị trường đi ngang
+        if ema34_volatility < 0.02 and crossovers >= 3:  # EMA34 ít biến động và nhiều crossover
+            sideways_analysis['is_sideways'] = True
+            sideways_analysis['sideways_strength'] = min(crossovers / 10.0, 1.0)
+            sideways_analysis['recommendation'] = 'avoid'
+            sideways_analysis['analysis'] = f'Thị trường đi ngang - {crossovers} lần cắt EMA34'
+        
+        return sideways_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phát hiện thị trường đi ngang: {e}")
+        return {'is_sideways': False, 'sideways_strength': 0.0, 'recommendation': 'trade', 'analysis': ''}
 
 def find_support_resistance(highs, lows, current_price):
     """Tìm mức hỗ trợ/kháng cự gần nhất với phân tích nâng cao"""
@@ -1909,9 +2250,11 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         else:
             return series[-n:]
 
-    # === 1. TREND INDICATORS (3 chỉ số cốt lõi) ===
+    # === 1. TREND INDICATORS (5 chỉ số cốt lõi) ===
     ema20 = ta.trend.ema_indicator(close, window=20)              # Trend ngắn hạn
+    ema34 = ta.trend.ema_indicator(close, window=34)              # Elliott Wave main waves
     ema50 = ta.trend.ema_indicator(close, window=50)              # Trend trung hạn  
+    ema89 = ta.trend.ema_indicator(close, window=89)              # Elliott Wave main waves
     adx = ta.trend.adx(high, low, close, window=7)      # Trend strength
 
     # === 2. MOMENTUM INDICATORS (3 chỉ số cốt lõi) ===
@@ -1952,11 +2295,28 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     # Phân tích SMC và Price Action
     smc_signals = analyze_smc_signals(current_price, order_blocks, fvgs, liquidity_zones, mitigation_zones)
     
-    # === 8. PHÂN TÍCH DIVERGENCE/CONVERGENCE - TRỌNG SỐ CAO ===
+    # === 8. PHÂN TÍCH EMA 34/89 THEO ELLIOTT WAVE ===
+    ema_trend_analysis = analyze_ema_34_89_trend(close, ema34, ema89, current_price)
+    ema_breakout_pattern = detect_ema_breakout_pattern(close, ema34, ema89)
+    ma_value_zones = analyze_ma_value_zones(close, ema34, ema89, current_price)
+    sideways_market = detect_ma_sideways_market(close, ema34, ema89)
+    
+    # === 9. PHÂN TÍCH DIVERGENCE/CONVERGENCE - TRỌNG SỐ CAO ===
     divergences = analyze_all_divergences(close, rsi, macd_line, volume)
     divergence_consensus = calculate_divergence_consensus(divergences)
     
-    # === 9. TÍNH TOÁN TÍN HIỆU CƠ BẢN ===
+    # === 10. PHÂN TÍCH ĐA KHUNG THỜI GIAN EMA ===
+    multi_tf_analysis = analyze_multi_timeframe_ema_system(symbol, current_price) if symbol else {'entry_signal': 'hold', 'trend_alignment': False, 'analysis': ''}
+    
+    # === 11. PHÂN TÍCH SMART MONEY ===
+    smart_money_analysis = detect_smart_money_accumulation_distribution(close, volume, ema34, ema89)
+    whale_analysis = detect_whale_activity(close, volume, ema34, ema89)
+    
+    # === 12. PHÂN TÍCH TÂM LÝ THỊ TRƯỜNG ===
+    fib_levels = calculate_fibonacci_levels(high, low)
+    fib_psychology = analyze_fibonacci_psychology(current_price, fib_levels, max(high[-50:]) - min(low[-50:]))
+    
+    # === 13. TÍNH TOÁN TÍN HIỆU CƠ BẢN ===
     
     # RSI Signal
     rsi_signal = 'Hold'
@@ -1993,6 +2353,59 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         ma_signal = 'Long'
     elif get_last(ema20) < get_last(ema50) and ma_distance > 0.01:
         ma_signal = 'Short'
+
+    # EMA 34/89 Signal (Elliott Wave based)
+    ema_34_89_signal = 'Hold'
+    if ema_trend_analysis['entry_signal'] == 'buy':
+        ema_34_89_signal = 'Long'
+    elif ema_trend_analysis['entry_signal'] == 'sell':
+        ema_34_89_signal = 'Short'
+    
+    # EMA Breakout Signal
+    ema_breakout_signal = 'Hold'
+    if ema_breakout_pattern['signal'] == 'buy':
+        ema_breakout_signal = 'Long'
+    elif ema_breakout_pattern['signal'] == 'sell':
+        ema_breakout_signal = 'Short'
+    
+    # Value Zone Signal
+    value_zone_signal = 'Hold'
+    if ma_value_zones['entry_opportunity'] == 'high' and ma_value_zones['price_behavior'] in ['pullback_bullish', 'pullback_bearish']:
+        if ma_value_zones['price_behavior'] == 'pullback_bullish':
+            value_zone_signal = 'Long'
+        else:
+            value_zone_signal = 'Short'
+    
+    # Sideways Market Signal
+    sideways_signal = 'Hold'
+    if sideways_market['recommendation'] == 'avoid':
+        sideways_signal = 'Avoid'  # Special signal to avoid trading
+    
+    # Multi-timeframe EMA Signal
+    multi_tf_signal = 'Hold'
+    if multi_tf_analysis['entry_signal'] == 'buy':
+        multi_tf_signal = 'Long'
+    elif multi_tf_analysis['entry_signal'] == 'sell':
+        multi_tf_signal = 'Short'
+    
+    # Smart Money Signal
+    smart_money_signal = 'Hold'
+    if smart_money_analysis['smart_money_signal'] == 'buy':
+        smart_money_signal = 'Long'
+    elif smart_money_analysis['smart_money_signal'] == 'sell':
+        smart_money_signal = 'Short'
+    
+    # Whale Activity Signal
+    whale_signal = 'Hold'
+    if whale_analysis['whale_signal'] == 'watch':
+        whale_signal = 'Watch'  # Special signal to watch for whale activity
+    
+    # Market Psychology Signal (Fibonacci-based)
+    psychology_signal = 'Hold'
+    if fib_psychology['market_sentiment'] in ['strong_bullish', 'bullish']:
+        psychology_signal = 'Long'
+    elif fib_psychology['market_sentiment'] in ['strong_bearish', 'bearish']:
+        psychology_signal = 'Short'
 
     # ADX Signal
     adx_signal = 'Hold'
@@ -2075,6 +2488,8 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         rsi_signal, stoch_signal, macd_signal, ma_signal, adx_signal,
         bb_signal, obv_signal, vwap_signal, atr_signal, pivot_signal,
         candlestick_signal, price_pattern_signal, sr_signal,
+        ema_34_89_signal, ema_breakout_signal, value_zone_signal, multi_tf_signal,  # EMA 34/89 signals
+        smart_money_signal, whale_signal, psychology_signal,  # Smart money & psychology signals
         smc_signals['order_block_signal'], smc_signals['fvg_signal'], 
         smc_signals['liquidity_signal'], smc_signals['mitigation_signal']
     ]
@@ -2465,6 +2880,26 @@ def analyze_coin(symbol):
         except Exception as e:
             logger.warning(f"⚠️ Không thể xác minh dự đoán ML cho {symbol} ({timeframe}): {e}")
 
+    # Phân tích correlation cho BTC để tăng cường độ chính xác
+    if symbol == 'BTC/USDT':
+        try:
+            # Lấy dữ liệu ETH và BTC Dominance
+            eth_data = load_or_fetch_historical_data('ETH/USDT', '4h')
+            btc_d_data = get_btc_dominance_data()
+            
+            if eth_data and btc_d_data:
+                # Phân tích correlation
+                correlation_analysis = analyze_crypto_correlation_ml(data, eth_data, btc_d_data)
+                
+                # Tăng cường phân tích BTC với thông tin correlation
+                result = enhance_btc_analysis_with_correlation(result, correlation_analysis)
+                
+                logger.info(f"🔗 Đã phân tích correlation cho BTC: {correlation_analysis.get('analysis', '')}")
+            else:
+                logger.warning("⚠️ Không thể lấy dữ liệu ETH hoặc BTC Dominance để phân tích correlation")
+        except Exception as e:
+            logger.error(f"❌ Lỗi phân tích correlation cho BTC: {e}")
+
     return result
 
 def send_telegram_message(message):
@@ -2587,6 +3022,19 @@ def format_coin_report(result):
             report += "\n"
     else:
         report += f"⏸️ {symbol}: Không có tín hiệu mạnh\n"
+    
+    # Thêm thông tin correlation cho BTC
+    if symbol == 'BTC/USDT' and 'correlation_analysis' in result:
+        correlation = result['correlation_analysis']
+        if correlation.get('analysis'):
+            report += f"\n🔗 <b>CORRELATION ANALYSIS:</b>\n"
+            report += f"📊 BTC-ETH Correlation: {correlation.get('btc_eth_correlation', 0):.2f}\n"
+            report += f"📈 BTC Dominance Impact: {correlation.get('btc_dominance_impact', 0):.2f}\n"
+            report += f"🎯 Market Sentiment: {correlation.get('market_sentiment', 'neutral').upper()}\n"
+            report += f"💡 {correlation.get('analysis', '')}\n"
+            
+            if correlation.get('ml_signals'):
+                report += f"🤖 ML Signals: {', '.join(correlation['ml_signals'])}\n"
     
     return report
 
@@ -2892,21 +3340,25 @@ def telegram_report_scheduler():
                 logger.info("🔄 Bắt đầu phân tích để gửi báo cáo Telegram...")
                 
                 results = []
+                # Chỉ gửi báo cáo BTC, nhưng vẫn phân tích cả BTC và ETH
                 for symbol in SYMBOLS:
                     result = analyze_coin(symbol)
                     if result:
                         results.append(result)
                 
-                # Gửi báo cáo riêng cho từng coin
+                # Gửi báo cáo chỉ cho BTC
                 if results:
+                    logger.info(f"🔍 Lọc {len(results)} kết quả để chỉ gửi BTC...")
                     for result in results:
-                        try:
-                            coin_report = format_coin_report(result)
-                            send_telegram_message(coin_report)
-                            logger.info(f"📱 Đã gửi báo cáo cho {result['symbol']}")
-                            time.sleep(2)  # Chờ 2 giây giữa các tin nhắn
-                        except Exception as e:
-                            logger.error(f"Lỗi khi gửi báo cáo cho {result['symbol']}: {e}")
+                        if result['symbol'] == 'BTC/USDT':  # Chỉ gửi báo cáo BTC
+                            try:
+                                coin_report = format_coin_report(result)
+                                send_telegram_message(coin_report)
+                                logger.info(f"✅ Đã gửi báo cáo cho {result['symbol']}")
+                            except Exception as e:
+                                logger.error(f"❌ Lỗi khi gửi báo cáo cho {result['symbol']}: {e}")
+                        else:
+                            logger.info(f"📊 Đã phân tích {result['symbol']} nhưng KHÔNG GỬI BÁO CÁO (theo yêu cầu)")
                 else:
                     logger.info("Không có kết quả phân tích để gửi báo cáo")
                 
@@ -3754,16 +4206,16 @@ def get_divergence_signal(divergence_type):
     return signal_map.get(divergence_type, 'Hold')
 
 def analyze_all_divergences(close_prices, rsi_values, macd_values, volume_data):
-    """Phân tích tất cả các loại divergence"""
+    """Phân tích tất cả các loại divergence theo phương pháp trading Việt Nam"""
     divergences = []
     
-    # RSI Divergence
-    rsi_div = analyze_rsi_divergence(close_prices, rsi_values)
+    # RSI Divergence (ưu tiên cao cho H4)
+    rsi_div = analyze_rsi_divergence_enhanced(close_prices, rsi_values)
     if rsi_div:
         divergences.append(rsi_div)
     
-    # MACD Divergence
-    macd_div = analyze_macd_divergence(close_prices, macd_values)
+    # MACD Divergence (ưu tiên cao cho H4)
+    macd_div = analyze_macd_divergence_enhanced(close_prices, macd_values)
     if macd_div:
         divergences.append(macd_div)
     
@@ -3772,7 +4224,653 @@ def analyze_all_divergences(close_prices, rsi_values, macd_values, volume_data):
     if volume_div:
         divergences.append(volume_div)
     
+    # Hidden Divergence (theo Elliott Wave)
+    hidden_div = analyze_hidden_divergence(close_prices, rsi_values, macd_values)
+    if hidden_div:
+        divergences.append(hidden_div)
+    
     return divergences
+
+def analyze_rsi_divergence_enhanced(close_prices, rsi_values):
+    """Phân tích RSI divergence nâng cao cho H4 timeframe"""
+    try:
+        if len(close_prices) < 20:
+            return None
+        
+        # Lấy 20 giá trị gần nhất
+        recent_closes = close_prices.iloc[-20:] if hasattr(close_prices, 'iloc') else close_prices[-20:]
+        recent_rsi = rsi_values.iloc[-20:] if hasattr(rsi_values, 'iloc') else rsi_values[-20:]
+        
+        # Tìm swing highs và swing lows
+        swing_highs = []
+        swing_lows = []
+        
+        for i in range(2, len(recent_closes) - 2):
+            if (recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]) > \
+               max(recent_closes.iloc[i-2:i+3] if hasattr(recent_closes, 'iloc') else recent_closes[i-2:i+3]):
+                swing_highs.append((i, recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i], 
+                                  recent_rsi.iloc[i] if hasattr(recent_rsi, 'iloc') else recent_rsi[i]))
+            
+            if (recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]) < \
+               min(recent_closes.iloc[i-2:i+3] if hasattr(recent_closes, 'iloc') else recent_closes[i-2:i+3]):
+                swing_lows.append((i, recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i], 
+                                 recent_rsi.iloc[i] if hasattr(recent_rsi, 'iloc') else recent_rsi[i]))
+        
+        # Kiểm tra divergence
+        if len(swing_highs) >= 2:
+            # Bearish Divergence
+            last_high = swing_highs[-1]
+            prev_high = swing_highs[-2]
+            
+            if last_high[1] > prev_high[1] and last_high[2] < prev_high[2]:
+                return {
+                    'type': 'bearish_divergence',
+                    'indicator': 'RSI',
+                    'strength': 0.8,
+                    'signal': 'Short',
+                    'analysis': f'RSI Bearish Divergence: Giá cao hơn nhưng RSI thấp hơn ({last_high[2]:.1f} vs {prev_high[2]:.1f})'
+                }
+        
+        if len(swing_lows) >= 2:
+            # Bullish Divergence
+            last_low = swing_lows[-1]
+            prev_low = swing_lows[-2]
+            
+            if last_low[1] < prev_low[1] and last_low[2] > prev_low[2]:
+                return {
+                    'type': 'bullish_divergence',
+                    'indicator': 'RSI',
+                    'strength': 0.8,
+                    'signal': 'Long',
+                    'analysis': f'RSI Bullish Divergence: Giá thấp hơn nhưng RSI cao hơn ({last_low[2]:.1f} vs {prev_low[2]:.1f})'
+                }
+        
+        return None
+    except Exception as e:
+        logger.error(f"Lỗi phân tích RSI divergence nâng cao: {e}")
+        return None
+
+def analyze_macd_divergence_enhanced(close_prices, macd_values):
+    """Phân tích MACD divergence nâng cao cho H4 timeframe"""
+    try:
+        if len(close_prices) < 20:
+            return None
+        
+        # Lấy 20 giá trị gần nhất
+        recent_closes = close_prices.iloc[-20:] if hasattr(close_prices, 'iloc') else close_prices[-20:]
+        recent_macd = macd_values.iloc[-20:] if hasattr(macd_values, 'iloc') else macd_values[-20:]
+        
+        # Tìm swing highs và swing lows
+        swing_highs = []
+        swing_lows = []
+        
+        for i in range(2, len(recent_closes) - 2):
+            if (recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]) > \
+               max(recent_closes.iloc[i-2:i+3] if hasattr(recent_closes, 'iloc') else recent_closes[i-2:i+3]):
+                swing_highs.append((i, recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i], 
+                                  recent_macd.iloc[i] if hasattr(recent_macd, 'iloc') else recent_macd[i]))
+            
+            if (recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]) < \
+               min(recent_closes.iloc[i-2:i+3] if hasattr(recent_closes, 'iloc') else recent_closes[i-2:i+3]):
+                swing_lows.append((i, recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i], 
+                                 recent_macd.iloc[i] if hasattr(recent_macd, 'iloc') else recent_macd[i]))
+        
+        # Kiểm tra divergence
+        if len(swing_highs) >= 2:
+            # Bearish Divergence
+            last_high = swing_highs[-1]
+            prev_high = swing_highs[-2]
+            
+            if last_high[1] > prev_high[1] and last_high[2] < prev_high[2]:
+                return {
+                    'type': 'bearish_divergence',
+                    'indicator': 'MACD',
+                    'strength': 0.8,
+                    'signal': 'Short',
+                    'analysis': f'MACD Bearish Divergence: Giá cao hơn nhưng MACD thấp hơn ({last_high[2]:.4f} vs {prev_high[2]:.4f})'
+                }
+        
+        if len(swing_lows) >= 2:
+            # Bullish Divergence
+            last_low = swing_lows[-1]
+            prev_low = swing_lows[-2]
+            
+            if last_low[1] < prev_low[1] and last_low[2] > prev_low[2]:
+                return {
+                    'type': 'bullish_divergence',
+                    'indicator': 'MACD',
+                    'strength': 0.8,
+                    'signal': 'Long',
+                    'analysis': f'MACD Bullish Divergence: Giá thấp hơn nhưng MACD cao hơn ({last_low[2]:.4f} vs {prev_low[2]:.4f})'
+                }
+        
+        return None
+    except Exception as e:
+        logger.error(f"Lỗi phân tích MACD divergence nâng cao: {e}")
+        return None
+
+def analyze_hidden_divergence(close_prices, rsi_values, macd_values):
+    """Phân tích Hidden Divergence theo Elliott Wave theory"""
+    try:
+        if len(close_prices) < 15:
+            return None
+        
+        # Lấy 15 giá trị gần nhất
+        recent_closes = close_prices.iloc[-15:] if hasattr(close_prices, 'iloc') else close_prices[-15:]
+        recent_rsi = rsi_values.iloc[-15:] if hasattr(rsi_values, 'iloc') else rsi_values[-15:]
+        recent_macd = macd_values.iloc[-15:] if hasattr(macd_values, 'iloc') else macd_values[-15:]
+        
+        # Tìm swing highs và swing lows
+        swing_highs = []
+        swing_lows = []
+        
+        for i in range(2, len(recent_closes) - 2):
+            if (recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]) > \
+               max(recent_closes.iloc[i-2:i+3] if hasattr(recent_closes, 'iloc') else recent_closes[i-2:i+3]):
+                swing_highs.append((i, recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i], 
+                                  recent_rsi.iloc[i] if hasattr(recent_rsi, 'iloc') else recent_rsi[i],
+                                  recent_macd.iloc[i] if hasattr(recent_macd, 'iloc') else recent_macd[i]))
+            
+            if (recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]) < \
+               min(recent_closes.iloc[i-2:i+3] if hasattr(recent_closes, 'iloc') else recent_closes[i-2:i+3]):
+                swing_lows.append((i, recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i], 
+                                 recent_rsi.iloc[i] if hasattr(recent_rsi, 'iloc') else recent_rsi[i],
+                                 recent_macd.iloc[i] if hasattr(recent_macd, 'iloc') else recent_macd[i]))
+        
+        # Kiểm tra Hidden Divergence (ngược với Regular Divergence)
+        if len(swing_highs) >= 2:
+            # Hidden Bearish Divergence (xu hướng giảm tiếp diễn)
+            last_high = swing_highs[-1]
+            prev_high = swing_highs[-2]
+            
+            if last_high[1] < prev_high[1] and last_high[2] > prev_high[2]:
+                return {
+                    'type': 'hidden_bearish_divergence',
+                    'indicator': 'RSI_MACD',
+                    'strength': 0.7,
+                    'signal': 'Short',
+                    'analysis': f'Hidden Bearish Divergence: Giá thấp hơn nhưng RSI cao hơn - xu hướng giảm tiếp diễn'
+                }
+        
+        if len(swing_lows) >= 2:
+            # Hidden Bullish Divergence (xu hướng tăng tiếp diễn)
+            last_low = swing_lows[-1]
+            prev_low = swing_lows[-2]
+            
+            if last_low[1] > prev_low[1] and last_low[2] < prev_low[2]:
+                return {
+                    'type': 'hidden_bullish_divergence',
+                    'indicator': 'RSI_MACD',
+                    'strength': 0.7,
+                    'signal': 'Long',
+                    'analysis': f'Hidden Bullish Divergence: Giá cao hơn nhưng RSI thấp hơn - xu hướng tăng tiếp diễn'
+                }
+        
+        return None
+    except Exception as e:
+        logger.error(f"Lỗi phân tích Hidden Divergence: {e}")
+        return None
+
+def analyze_multi_timeframe_ema_system(symbol, current_price):
+    """Phân tích hệ thống EMA đa khung thời gian theo phương pháp trading Việt Nam"""
+    try:
+        multi_tf_analysis = {
+            'h4_trend': 'neutral',
+            'h1_trend': 'neutral',
+            'm15_trend': 'neutral',
+            'entry_signal': 'hold',
+            'trend_alignment': False,
+            'analysis': ''
+        }
+        
+        # Lấy dữ liệu cho các khung thời gian
+        timeframes = ['4h', '1h', '15m']
+        tf_data = {}
+        
+        for tf in timeframes:
+            try:
+                data = load_or_fetch_historical_data(symbol, tf)
+                if data and len(data['close']) >= 50:
+                    close = pd.Series(data['close'])
+                    ema34 = ta.trend.ema_indicator(close, window=34)
+                    ema89 = ta.trend.ema_indicator(close, window=89)
+                    
+                    tf_data[tf] = {
+                        'close': close,
+                        'ema34': ema34,
+                        'ema89': ema89,
+                        'current_price': current_price
+                    }
+            except Exception as e:
+                logger.error(f"Lỗi lấy dữ liệu {tf} cho {symbol}: {e}")
+                continue
+        
+        # Phân tích xu hướng H4 (khung chính)
+        if '4h' in tf_data:
+            h4_data = tf_data['4h']
+            h4_close = h4_data['close'].iloc[-1]
+            h4_ema34 = h4_data['ema34'].iloc[-1]
+            h4_ema89 = h4_data['ema89'].iloc[-1]
+            
+            if h4_close > h4_ema34 and h4_ema34 > h4_ema89:
+                multi_tf_analysis['h4_trend'] = 'bullish'
+            elif h4_close < h4_ema34 and h4_ema34 < h4_ema89:
+                multi_tf_analysis['h4_trend'] = 'bearish'
+            else:
+                multi_tf_analysis['h4_trend'] = 'mixed'
+        
+        # Phân tích xu hướng H1 (khung vào lệnh)
+        if '1h' in tf_data:
+            h1_data = tf_data['1h']
+            h1_close = h1_data['close'].iloc[-1]
+            h1_ema34 = h1_data['ema34'].iloc[-1]
+            h1_ema89 = h1_data['ema89'].iloc[-1]
+            
+            if h1_close > h1_ema34 and h1_ema34 > h1_ema89:
+                multi_tf_analysis['h1_trend'] = 'bullish'
+            elif h1_close < h1_ema34 and h1_ema34 < h1_ema89:
+                multi_tf_analysis['h1_trend'] = 'bearish'
+            else:
+                multi_tf_analysis['h1_trend'] = 'mixed'
+        
+        # Phân tích xu hướng M15 (khung vào lệnh chi tiết)
+        if '15m' in tf_data:
+            m15_data = tf_data['15m']
+            m15_close = m15_data['close'].iloc[-1]
+            m15_ema34 = m15_data['ema34'].iloc[-1]
+            m15_ema89 = m15_data['ema89'].iloc[-1]
+            
+            if m15_close > m15_ema34 and m15_ema34 > m15_ema89:
+                multi_tf_analysis['m15_trend'] = 'bullish'
+            elif m15_close < m15_ema34 and m15_ema34 < m15_ema89:
+                multi_tf_analysis['m15_trend'] = 'bearish'
+            else:
+                multi_tf_analysis['m15_trend'] = 'mixed'
+        
+        # Xác định tín hiệu entry theo quy tắc đa khung thời gian
+        if multi_tf_analysis['h4_trend'] == 'bullish':
+            if multi_tf_analysis['h1_trend'] == 'bullish' and multi_tf_analysis['m15_trend'] == 'bullish':
+                multi_tf_analysis['entry_signal'] = 'buy'
+                multi_tf_analysis['trend_alignment'] = True
+                multi_tf_analysis['analysis'] = 'Tất cả khung thời gian đồng thuận tăng - tín hiệu mua mạnh'
+            elif multi_tf_analysis['h1_trend'] == 'bullish' and multi_tf_analysis['m15_trend'] == 'mixed':
+                multi_tf_analysis['entry_signal'] = 'buy'
+                multi_tf_analysis['trend_alignment'] = True
+                multi_tf_analysis['analysis'] = 'H4 và H1 tăng, M15 hỗn hợp - tín hiệu mua'
+            else:
+                multi_tf_analysis['entry_signal'] = 'hold'
+                multi_tf_analysis['analysis'] = 'H4 tăng nhưng H1/M15 không đồng thuận - chờ'
+        
+        elif multi_tf_analysis['h4_trend'] == 'bearish':
+            if multi_tf_analysis['h1_trend'] == 'bearish' and multi_tf_analysis['m15_trend'] == 'bearish':
+                multi_tf_analysis['entry_signal'] = 'sell'
+                multi_tf_analysis['trend_alignment'] = True
+                multi_tf_analysis['analysis'] = 'Tất cả khung thời gian đồng thuận giảm - tín hiệu bán mạnh'
+            elif multi_tf_analysis['h1_trend'] == 'bearish' and multi_tf_analysis['m15_trend'] == 'mixed':
+                multi_tf_analysis['entry_signal'] = 'sell'
+                multi_tf_analysis['trend_alignment'] = True
+                multi_tf_analysis['analysis'] = 'H4 và H1 giảm, M15 hỗn hợp - tín hiệu bán'
+            else:
+                multi_tf_analysis['entry_signal'] = 'hold'
+                multi_tf_analysis['analysis'] = 'H4 giảm nhưng H1/M15 không đồng thuận - chờ'
+        
+        else:
+            multi_tf_analysis['entry_signal'] = 'hold'
+            multi_tf_analysis['analysis'] = 'H4 hỗn hợp - đứng ngoài quan sát'
+        
+        return multi_tf_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phân tích đa khung thời gian EMA: {e}")
+        return {'h4_trend': 'neutral', 'h1_trend': 'neutral', 'm15_trend': 'neutral', 'entry_signal': 'hold', 'trend_alignment': False, 'analysis': ''}
+
+def detect_smart_money_accumulation_distribution(close, volume, ema34, ema89):
+    """Phát hiện giai đoạn tích lũy và phân phối của smart money"""
+    try:
+        smart_money_analysis = {
+            'phase': 'neutral',
+            'accumulation_strength': 0.0,
+            'distribution_strength': 0.0,
+            'smart_money_signal': 'hold',
+            'analysis': ''
+        }
+        
+        if len(close) < 20:
+            return smart_money_analysis
+        
+        # Lấy 20 giá trị gần nhất
+        recent_closes = close.iloc[-20:] if hasattr(close, 'iloc') else close[-20:]
+        recent_volume = volume.iloc[-20:] if hasattr(volume, 'iloc') else volume[-20:]
+        recent_ema34 = ema34.iloc[-20:] if hasattr(ema34, 'iloc') else ema34[-20:]
+        recent_ema89 = ema89.iloc[-20:] if hasattr(ema89, 'iloc') else ema89[-20:]
+        
+        # Tính volume trung bình
+        avg_volume = np.mean(recent_volume)
+        
+        # Phân tích tích lũy (Accumulation)
+        accumulation_signals = 0
+        for i in range(len(recent_closes)):
+            current_close = recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]
+            current_volume = recent_volume.iloc[i] if hasattr(recent_volume, 'iloc') else recent_volume[i]
+            current_ema34 = recent_ema34.iloc[i] if hasattr(recent_ema34, 'iloc') else recent_ema34[i]
+            
+            # Tích lũy: giá giảm nhưng volume tăng, giá gần EMA34
+            if current_close < current_ema34 and current_volume > avg_volume * 1.2:
+                accumulation_signals += 1
+        
+        # Phân tích phân phối (Distribution)
+        distribution_signals = 0
+        for i in range(len(recent_closes)):
+            current_close = recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]
+            current_volume = recent_volume.iloc[i] if hasattr(recent_volume, 'iloc') else recent_volume[i]
+            current_ema34 = recent_ema34.iloc[i] if hasattr(recent_ema34, 'iloc') else recent_ema34[i]
+            
+            # Phân phối: giá tăng nhưng volume giảm, giá gần EMA34
+            if current_close > current_ema34 and current_volume < avg_volume * 0.8:
+                distribution_signals += 1
+        
+        # Xác định giai đoạn
+        if accumulation_signals >= 3:
+            smart_money_analysis['phase'] = 'accumulation'
+            smart_money_analysis['accumulation_strength'] = min(accumulation_signals / 10.0, 1.0)
+            smart_money_analysis['smart_money_signal'] = 'buy'
+            smart_money_analysis['analysis'] = f'Giai đoạn tích lũy - {accumulation_signals} tín hiệu'
+        elif distribution_signals >= 3:
+            smart_money_analysis['phase'] = 'distribution'
+            smart_money_analysis['distribution_strength'] = min(distribution_signals / 10.0, 1.0)
+            smart_money_analysis['smart_money_signal'] = 'sell'
+            smart_money_analysis['analysis'] = f'Giai đoạn phân phối - {distribution_signals} tín hiệu'
+        else:
+            smart_money_analysis['phase'] = 'neutral'
+            smart_money_analysis['analysis'] = 'Không có dấu hiệu tích lũy/phân phối rõ ràng'
+        
+        return smart_money_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phát hiện smart money: {e}")
+        return {'phase': 'neutral', 'accumulation_strength': 0.0, 'distribution_strength': 0.0, 'smart_money_signal': 'hold', 'analysis': ''}
+
+def detect_whale_activity(close, volume, ema34, ema89):
+    """Phát hiện hoạt động của cá mập (whale)"""
+    try:
+        whale_analysis = {
+            'whale_activity': False,
+            'activity_type': 'none',
+            'whale_signal': 'hold',
+            'analysis': ''
+        }
+        
+        if len(close) < 10:
+            return whale_analysis
+        
+        # Lấy 10 giá trị gần nhất
+        recent_closes = close.iloc[-10:] if hasattr(close, 'iloc') else close[-10:]
+        recent_volume = volume.iloc[-10:] if hasattr(volume, 'iloc') else volume[-10:]
+        recent_ema34 = ema34.iloc[-10:] if hasattr(ema34, 'iloc') else ema34[-10:]
+        
+        # Tính volume trung bình
+        avg_volume = np.mean(recent_volume)
+        
+        # Phát hiện volume spike (tăng đột biến)
+        volume_spikes = 0
+        for i in range(len(recent_volume)):
+            current_volume = recent_volume.iloc[i] if hasattr(recent_volume, 'iloc') else recent_volume[i]
+            if current_volume > avg_volume * 3:  # Volume tăng gấp 3 lần
+                volume_spikes += 1
+        
+        # Phát hiện giá bị đẩy mạnh
+        price_moves = 0
+        for i in range(1, len(recent_closes)):
+            prev_close = recent_closes.iloc[i-1] if hasattr(recent_closes, 'iloc') else recent_closes[i-1]
+            current_close = recent_closes.iloc[i] if hasattr(recent_closes, 'iloc') else recent_closes[i]
+            price_change = abs(current_close - prev_close) / prev_close
+            
+            if price_change > 0.05:  # Giá thay đổi > 5%
+                price_moves += 1
+        
+        # Xác định hoạt động cá mập
+        if volume_spikes >= 2 and price_moves >= 2:
+            whale_analysis['whale_activity'] = True
+            whale_analysis['activity_type'] = 'strong'
+            whale_analysis['whale_signal'] = 'watch'
+            whale_analysis['analysis'] = f'Hoạt động cá mập mạnh - {volume_spikes} volume spikes, {price_moves} price moves'
+        elif volume_spikes >= 1 or price_moves >= 1:
+            whale_analysis['whale_activity'] = True
+            whale_analysis['activity_type'] = 'moderate'
+            whale_analysis['whale_signal'] = 'watch'
+            whale_analysis['analysis'] = f'Hoạt động cá mập vừa - {volume_spikes} volume spikes, {price_moves} price moves'
+        
+        return whale_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phát hiện hoạt động cá mập: {e}")
+        return {'whale_activity': False, 'activity_type': 'none', 'whale_signal': 'hold', 'analysis': ''}
+
+def analyze_crypto_correlation_ml(btc_data, eth_data, btc_d_data):
+    """Phân tích mối liên kết giữa BTC, ETH và BTC.D bằng AI/ML"""
+    try:
+        correlation_analysis = {
+            'btc_eth_correlation': 0.0,
+            'btc_dominance_impact': 0.0,
+            'market_sentiment': 'neutral',
+            'btc_prediction_confidence': 0.0,
+            'analysis': '',
+            'ml_signals': []
+        }
+        
+        if not all([btc_data, eth_data, btc_d_data]):
+            return correlation_analysis
+        
+        # Chuyển đổi dữ liệu sang pandas DataFrame
+        btc_df = pd.DataFrame(btc_data)
+        eth_df = pd.DataFrame(eth_data)
+        btc_d_df = pd.DataFrame(btc_d_data)
+        
+        # Tính correlation giữa BTC và ETH
+        if len(btc_df) >= 20 and len(eth_df) >= 20:
+            min_len = min(len(btc_df), len(eth_df))
+            btc_prices = btc_df['close'].iloc[-min_len:]
+            eth_prices = eth_df['close'].iloc[-min_len:]
+            
+            # Tính correlation
+            btc_eth_corr = btc_prices.corr(eth_prices)
+            correlation_analysis['btc_eth_correlation'] = btc_eth_corr
+            
+            # Phân tích BTC Dominance impact
+            if len(btc_d_df) >= 20:
+                btc_d_prices = btc_d_df['close'].iloc[-min_len:]
+                btc_d_corr = btc_prices.corr(btc_d_prices)
+                correlation_analysis['btc_dominance_impact'] = btc_d_corr
+        
+        # Tạo features cho ML
+        ml_features = create_correlation_ml_features(btc_df, eth_df, btc_d_df)
+        
+        # Phân tích bằng ML models
+        ml_analysis = analyze_correlation_with_ml(ml_features)
+        correlation_analysis.update(ml_analysis)
+        
+        return correlation_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phân tích correlation ML: {e}")
+        return {'btc_eth_correlation': 0.0, 'btc_dominance_impact': 0.0, 'market_sentiment': 'neutral', 'btc_prediction_confidence': 0.0, 'analysis': '', 'ml_signals': []}
+
+def create_correlation_ml_features(btc_df, eth_df, btc_d_df):
+    """Tạo features cho ML từ dữ liệu correlation"""
+    try:
+        features = {}
+        
+        # Tính toán các chỉ số correlation
+        if len(btc_df) >= 20 and len(eth_df) >= 20:
+            min_len = min(len(btc_df), len(eth_df))
+            
+            # Price correlation
+            btc_prices = btc_df['close'].iloc[-min_len:]
+            eth_prices = eth_df['close'].iloc[-min_len:]
+            features['price_correlation'] = btc_prices.corr(eth_prices)
+            
+            # Volume correlation
+            btc_volume = btc_df['volume'].iloc[-min_len:]
+            eth_volume = eth_df['volume'].iloc[-min_len:]
+            features['volume_correlation'] = btc_volume.corr(eth_volume)
+            
+            # Price change correlation
+            btc_change = btc_prices.pct_change().dropna()
+            eth_change = eth_prices.pct_change().dropna()
+            features['change_correlation'] = btc_change.corr(eth_change)
+            
+            # Volatility correlation
+            btc_volatility = btc_change.rolling(7).std()
+            eth_volatility = eth_change.rolling(7).std()
+            features['volatility_correlation'] = btc_volatility.corr(eth_volatility)
+        
+        # BTC Dominance analysis
+        if len(btc_d_df) >= 20:
+            btc_d_prices = btc_d_df['close'].iloc[-min_len:]
+            features['btc_dominance_trend'] = btc_d_prices.pct_change().mean()
+            features['btc_dominance_volatility'] = btc_d_prices.pct_change().std()
+            features['btc_dominance_correlation'] = btc_prices.corr(btc_d_prices)
+        
+        # Market structure features
+        features['btc_eth_ratio'] = btc_prices.iloc[-1] / eth_prices.iloc[-1]
+        features['btc_eth_ratio_change'] = (btc_prices.iloc[-1] / eth_prices.iloc[-1]) / (btc_prices.iloc[-5] / eth_prices.iloc[-5]) - 1
+        
+        return features
+    except Exception as e:
+        logger.error(f"Lỗi tạo correlation features: {e}")
+        return {}
+
+def analyze_correlation_with_ml(features):
+    """Phân tích correlation bằng ML models"""
+    try:
+        ml_analysis = {
+            'market_sentiment': 'neutral',
+            'btc_prediction_confidence': 0.0,
+            'analysis': '',
+            'ml_signals': []
+        }
+        
+        if not features:
+            return ml_analysis
+        
+        # Tạo feature vector
+        feature_vector = np.array([
+            features.get('price_correlation', 0),
+            features.get('volume_correlation', 0),
+            features.get('change_correlation', 0),
+            features.get('volatility_correlation', 0),
+            features.get('btc_dominance_trend', 0),
+            features.get('btc_dominance_volatility', 0),
+            features.get('btc_dominance_correlation', 0),
+            features.get('btc_eth_ratio', 0),
+            features.get('btc_eth_ratio_change', 0)
+        ]).reshape(1, -1)
+        
+        # Phân tích correlation patterns
+        price_corr = features.get('price_correlation', 0)
+        dominance_corr = features.get('btc_dominance_correlation', 0)
+        dominance_trend = features.get('btc_dominance_trend', 0)
+        
+        # Xác định market sentiment
+        if price_corr > 0.7 and dominance_corr > 0.3:
+            ml_analysis['market_sentiment'] = 'strong_correlation'
+            ml_analysis['btc_prediction_confidence'] = 0.8
+            ml_analysis['analysis'] = 'BTC và ETH có correlation mạnh, BTC Dominance tăng'
+            ml_analysis['ml_signals'].append('Strong correlation signal')
+        elif price_corr > 0.5 and dominance_corr < -0.2:
+            ml_analysis['market_sentiment'] = 'altcoin_season'
+            ml_analysis['btc_prediction_confidence'] = 0.6
+            ml_analysis['analysis'] = 'Altcoin season - ETH có thể outperform BTC'
+            ml_analysis['ml_signals'].append('Altcoin season signal')
+        elif price_corr < 0.3:
+            ml_analysis['market_sentiment'] = 'divergence'
+            ml_analysis['btc_prediction_confidence'] = 0.4
+            ml_analysis['analysis'] = 'BTC và ETH có correlation thấp - thị trường phân hóa'
+            ml_analysis['ml_signals'].append('Divergence signal')
+        else:
+            ml_analysis['market_sentiment'] = 'neutral'
+            ml_analysis['btc_prediction_confidence'] = 0.5
+            ml_analysis['analysis'] = 'Correlation bình thường'
+        
+        # Phân tích BTC Dominance
+        if dominance_trend > 0.02:
+            ml_analysis['ml_signals'].append('BTC Dominance increasing')
+            ml_analysis['analysis'] += ' - BTC Dominance tăng mạnh'
+        elif dominance_trend < -0.02:
+            ml_analysis['ml_signals'].append('BTC Dominance decreasing')
+            ml_analysis['analysis'] += ' - BTC Dominance giảm'
+        
+        return ml_analysis
+    except Exception as e:
+        logger.error(f"Lỗi phân tích ML correlation: {e}")
+        return {'market_sentiment': 'neutral', 'btc_prediction_confidence': 0.0, 'analysis': '', 'ml_signals': []}
+
+def get_btc_dominance_data():
+    """Lấy dữ liệu BTC Dominance"""
+    try:
+        # Sử dụng yfinance để lấy dữ liệu BTC Dominance
+        import yfinance as yf
+        
+        # BTC Dominance ticker (sử dụng ticker giả lập vì yfinance không có BTC Dominance trực tiếp)
+        # Thay vào đó, chúng ta sẽ tính toán từ dữ liệu BTC và ETH
+        btc_ticker = yf.Ticker("BTC-USD")
+        eth_ticker = yf.Ticker("ETH-USD")
+        
+        btc_hist = btc_ticker.history(period="30d", interval="1h")
+        eth_hist = eth_ticker.history(period="30d", interval="1h")
+        
+        if btc_hist.empty or eth_hist.empty:
+            return None
+        
+        # Tính toán BTC Dominance giả lập (BTC market cap / Total crypto market cap)
+        # Đây là một approximation đơn giản
+        btc_dominance = btc_hist['Close'] / (btc_hist['Close'] + eth_hist['Close']) * 100
+        
+        # Chuyển đổi sang format giống với dữ liệu crypto khác
+        btc_d_data = {
+            'open': btc_dominance.values,
+            'high': btc_dominance.values,
+            'low': btc_dominance.values,
+            'close': btc_dominance.values,
+            'volume': btc_hist['Volume'].values,
+            'timestamp': btc_hist.index.astype(np.int64) // 10**9
+        }
+        
+        return btc_d_data
+    except Exception as e:
+        logger.error(f"Lỗi lấy dữ liệu BTC Dominance: {e}")
+        return None
+
+def enhance_btc_analysis_with_correlation(btc_analysis, correlation_analysis):
+    """Tăng cường phân tích BTC với thông tin correlation"""
+    try:
+        enhanced_analysis = btc_analysis.copy()
+        
+        # Thêm thông tin correlation
+        enhanced_analysis['correlation_analysis'] = correlation_analysis
+        
+        # Điều chỉnh confidence dựa trên correlation
+        original_confidence = enhanced_analysis.get('confidence', 0.5)
+        correlation_confidence = correlation_analysis.get('btc_prediction_confidence', 0.5)
+        
+        # Kết hợp confidence
+        combined_confidence = (original_confidence * 0.7) + (correlation_confidence * 0.3)
+        enhanced_analysis['confidence'] = combined_confidence
+        
+        # Điều chỉnh signal dựa trên market sentiment
+        market_sentiment = correlation_analysis.get('market_sentiment', 'neutral')
+        original_signal = enhanced_analysis.get('signal', 'Hold')
+        
+        if market_sentiment == 'strong_correlation' and original_signal != 'Hold':
+            enhanced_analysis['signal_strength'] = enhanced_analysis.get('signal_strength', 0.5) + 0.2
+        elif market_sentiment == 'divergence':
+            enhanced_analysis['signal_strength'] = enhanced_analysis.get('signal_strength', 0.5) - 0.1
+        
+        # Thêm analysis text
+        correlation_text = correlation_analysis.get('analysis', '')
+        if correlation_text:
+            enhanced_analysis['analysis'] += f"\n🔗 Correlation: {correlation_text}"
+        
+        return enhanced_analysis
+    except Exception as e:
+        logger.error(f"Lỗi enhance BTC analysis: {e}")
+        return btc_analysis
 
 def calculate_divergence_consensus(divergences):
     """Tính toán consensus từ các divergence"""
@@ -4779,27 +5877,38 @@ def main():
     
     # Test Telegram trước
     logger.info("🧪 TESTING TELEGRAM CONNECTION...")
-    test_success = send_telegram_message("🤖 Bot test message - GitHub Actions đang chạy!")
+    test_success = send_telegram_message("🤖 Bot test message - Chỉ gửi báo cáo BTC!")
     if test_success:
         logger.info("✅ Telegram test thành công!")
     else:
         logger.error("❌ Telegram test thất bại!")
     
-    # Gửi báo cáo Telegram
-    if results:
-
-        
-        report = format_analysis_report(results)
+    # Gửi báo cáo Telegram chỉ cho BTC
+    logger.info("🔍 Lọc kết quả để chỉ gửi báo cáo BTC...")
+    btc_results = [result for result in results if result['symbol'] == 'BTC/USDT']
+    eth_results = [result for result in results if result['symbol'] == 'ETH/USDT']
+    
+    logger.info(f"📊 Tổng kết quả: {len(results)} (BTC: {len(btc_results)}, ETH: {len(eth_results)})")
+    
+    if btc_results:
+        logger.info("📱 CHỈ GỬI BÁO CÁO BTC - KHÔNG GỬI ETH!")
+        report = format_analysis_report(btc_results)
         success = send_telegram_message(report)
         if success:
-            logger.info("📱 Đã gửi báo cáo Telegram thành công!")
+            logger.info("✅ Đã gửi báo cáo Telegram cho BTC thành công!")
         else:
-            logger.error("❌ Lỗi gửi báo cáo Telegram")
+            logger.error("❌ Lỗi gửi báo cáo Telegram cho BTC")
     else:
-        logger.info("📊 Không có kết quả phân tích để gửi")
-        # Gửi thông báo không có tín hiệu
-        no_signal_report = "🤖 <b>BÁO CÁO PHÂN TÍCH</b>\n\n📊 Không có tín hiệu mạnh nào được phát hiện trong thị trường hiện tại.\n\n💡 Điều này có thể do:\n• Thị trường đang sideway/consolidation\n• Các chỉ số chưa đạt ngưỡng tín hiệu\n• Cần chờ thêm thời gian để có tín hiệu rõ ràng\n\n⏰ Thời gian: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info("📊 Không có kết quả phân tích BTC để gửi")
+        # Gửi thông báo không có tín hiệu cho BTC
+        no_signal_report = "🤖 <b>BÁO CÁO PHÂN TÍCH BTC</b>\n\n📊 Không có tín hiệu mạnh nào được phát hiện cho BTC trong thị trường hiện tại.\n\n💡 Điều này có thể do:\n• Thị trường đang sideway/consolidation\n• Các chỉ số chưa đạt ngưỡng tín hiệu\n• Cần chờ thêm thời gian để có tín hiệu rõ ràng\n\n⏰ Thời gian: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         send_telegram_message(no_signal_report)
+    
+    # Log thông tin về ETH (không gửi báo cáo)
+    if eth_results:
+        logger.info("📊 Đã phân tích ETH nhưng KHÔNG GỬI BÁO CÁO (theo yêu cầu)")
+    else:
+        logger.info("📊 Không có kết quả phân tích ETH")
     
     # Kiểm tra tình trạng dữ liệu lịch sử (không xóa, chỉ kiểm tra)
     logger.info("🧹 Kiểm tra tình trạng dữ liệu lịch sử...")

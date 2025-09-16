@@ -2251,7 +2251,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             return series[-n:]
 
     # === 1. TREND INDICATORS (5 chỉ số cốt lõi) ===
-    ema20 = ta.trend.ema_indicator(close, window=20)              # Trend ngắn hạn
+    ema34 = ta.trend.ema_indicator(close, window=34)              # Trend ngắn hạn
     ema34 = ta.trend.ema_indicator(close, window=34)              # Elliott Wave main waves
     ema50 = ta.trend.ema_indicator(close, window=50)              # Trend trung hạn  
     ema89 = ta.trend.ema_indicator(close, window=89)              # Elliott Wave main waves
@@ -2348,10 +2348,10 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
 
     # MA Signal
     ma_signal = 'Hold'
-    ma_distance = abs(get_last(ema20) - get_last(ema50)) / get_last(ema50)
-    if get_last(ema20) > get_last(ema50) and ma_distance > 0.01:
+    ma_distance = abs(get_last(ema34) - get_last(ema89)) / get_last(ema89)
+    if get_last(ema34) > get_last(ema89) and ma_distance > 0.01:
         ma_signal = 'Long'
-    elif get_last(ema20) < get_last(ema50) and ma_distance > 0.01:
+    elif get_last(ema34) < get_last(ema89) and ma_distance > 0.01:
         ma_signal = 'Short'
 
     # EMA 34/89 Signal (Elliott Wave based)
@@ -2410,9 +2410,9 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     # ADX Signal
     adx_signal = 'Hold'
     if get_last(adx) > 25:
-        if get_last(close) > get_last(ema20):
+        if get_last(close) > get_last(ema34):
             adx_signal = 'Long'
-        elif get_last(close) < get_last(ema20):
+        elif get_last(close) < get_last(ema34):
             adx_signal = 'Short'
 
     # Bollinger Bands Signal
@@ -2509,7 +2509,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
         current_volume = volume.iloc[-1]
         avg_volume = volume.iloc[-10:].mean()
         if current_volume > avg_volume * 1.5:  # Volume cao
-            if get_last(close) > get_last(ema20):
+            if get_last(close) > get_last(ema34):
                 volume_signal = 'Long'
             else:
                 volume_signal = 'Short'
@@ -2591,7 +2591,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
     
     # Tín hiệu dựa trên volatility
     if get_last(atr) > np.mean([atr.iloc[i] for i in range(-10, 0)]) * 1.2:
-        if get_last(close) > get_last(ema20):
+        if get_last(close) > get_last(ema34):
             market_condition_signals.extend(['Long', 'Long'])
         else:
             market_condition_signals.extend(['Short', 'Short'])
@@ -2692,7 +2692,7 @@ def analyze_timeframe(data, timeframe, current_price, symbol=None):
             'stoch_d': get_last(stoch_d),
             'macd_line': get_last(macd_line),
             'macd_signal': get_last(macd_signal),
-            'ema20': get_last(ema20),
+            'ema34': get_last(ema34),
             'ema50': get_last(ema50),
             'adx': get_last(adx),
             'bb_upper': get_last(bb_upper),
@@ -2954,7 +2954,56 @@ def format_coin_report(result):
         emoji = "✅" if decision == 'Long' else "🔴"
         report += f"{emoji} <b>{symbol}: {decision}</b> (Đồng thuận: {consensus_ratio:.1%})\n"
         report += f"📊 Timeframes: {', '.join([a['timeframe'] for a in valid_timeframes])}\n"
-        report += f"💡 Tín hiệu từ timeframe có đồng thuận cao nhất\n\n"
+        report += f"💡 Tín hiệu từ timeframe có đồng thuận cao nhất\n"
+        
+        # Thêm giải thích lý do cho BTC
+        if symbol == 'BTC/USDT':
+            report += f"🔍 <b>LÝ DO NHẬN ĐỊNH {symbol}:</b>\n"
+            # Phân tích các yếu tố chính
+            reasons = []
+            
+            # Phân tích divergence
+            divergence_signals = [a for a in valid_timeframes if a['divergence_consensus']['signal'] != 'Hold']
+            if divergence_signals:
+                divergence_count = sum(a['divergence_consensus']['count'] for a in divergence_signals)
+                reasons.append(f"Divergence mạnh ({divergence_count} signals)")
+            
+            # Phân tích RSI
+            rsi_values = [a['rsi_value'] for a in valid_timeframes]
+            if any(rsi < 30 for rsi in rsi_values):
+                reasons.append("RSI oversold - cơ hội mua")
+            elif any(rsi > 70 for rsi in rsi_values):
+                reasons.append("RSI overbought - cảnh báo bán")
+            
+            # Phân tích MACD
+            macd_signals = [a for a in valid_timeframes if a['macd_signal'] != 'Hold']
+            if macd_signals:
+                reasons.append("MACD crossover - xác nhận xu hướng")
+            
+            # Phân tích Bollinger Bands
+            bb_signals = [a for a in valid_timeframes if a['bb_signal'] != 'Hold']
+            if bb_signals:
+                reasons.append("Bollinger Bands breakout")
+            
+            # Phân tích Price Action
+            pa_signals = [a for a in valid_timeframes if a.get('price_action_patterns') and len(a['price_action_patterns']) > 0]
+            if pa_signals:
+                reasons.append("Price Action patterns mạnh")
+            
+            # Phân tích ML
+            ml_signals = [a for a in valid_timeframes if a.get('ml_prediction') and a['ml_prediction']['confidence'] > 0.7]
+            if ml_signals:
+                ml_avg_conf = sum(a['ml_prediction']['confidence'] for a in ml_signals) / len(ml_signals)
+                reasons.append(f"ML prediction cao ({ml_avg_conf:.1%})")
+            
+            # Hiển thị lý do (tối đa 4 lý do quan trọng nhất)
+            if reasons:
+                for i, reason in enumerate(reasons[:4], 1):
+                    report += f"  {i}. {reason}\n"
+            else:
+                report += "  • Phân tích kỹ thuật tổng hợp\n"
+            
+            report += "\n"
         
         # Hiển thị thông tin về các timeframe được chọn
         for analysis in valid_timeframes:
@@ -3054,7 +3103,6 @@ def format_analysis_report(results):
     report += f"⏰ Thời gian: {current_time}\n"
     report += f"📊 Ngưỡng tối thiểu: {SIGNAL_THRESHOLD:.1%}{accuracy_summary}\n"
     report += f"💰 Tài sản: Crypto\n"
-    report += f"🎯 <b>12 CHỈ SỐ CỐT LÕI + ML + CONVERGENCE ANALYSIS</b>\n\n"
     
     if not results:
         report += "📊 Không có xu hướng mạnh nào được phát hiện."

@@ -3866,5 +3866,121 @@
     "actual_result": null,
     "accuracy": null,
     "status": "pending"
+  },
+  {
+    "id": "BTC/USDT_1d_1758045354",
+    "symbol": "BTC/USDT",
+    "timeframe": "1d",
+    "timestamp": "2025-09-17T00:55:54.229659",
+    "current_price": 116507.25,
+    "prediction": {
+      "trend": "bullish",
+      "signal": "Long",
+      "confidence": 0.3103448275862069,
+      "entry_price": 116507.25,
+      "stop_loss": 110389.30773185634,
+      "take_profit": 129763.22879535911,
+      "risk_reward_ratio": 0,
+      "analysis_summary": "Timeframe: 1d, Consensus: 31.0%",
+      "technical_signals": {
+        "rsi_signal": "Hold",
+        "macd_signal": "Hold",
+        "bb_signal": "Hold",
+        "stoch_signal": "Hold"
+      },
+      "commodity_signals": {},
+      "smc_signals": {
+        "order_block_signal": "Short",
+        "fvg_signal": "Hold",
+        "liquidity_signal": "Short",
+        "mitigation_signal": "Short",
+        "analysis": [
+          "📉 Bearish Order Block tại $115878.7100 - $123667.7900",
+          "📉 Liquidity High tại $116665.6300",
+          "📉 Bearish Mitigation tại $118295.0900"
+        ]
+      },
+      "price_action_signals": {}
+    },
+    "actual_result": null,
+    "accuracy": null,
+    "status": "pending"
+  },
+  {
+    "id": "ETH/USDT_8h_1758045357",
+    "symbol": "ETH/USDT",
+    "timeframe": "8h",
+    "timestamp": "2025-09-17T00:55:57.594101",
+    "current_price": 4487.97,
+    "prediction": {
+      "trend": "bullish",
+      "signal": "Long",
+      "confidence": 0.3076923076923077,
+      "entry_price": 4487.97,
+      "stop_loss": 4413.934979999999,
+      "take_profit": 4594.518075000004,
+      "risk_reward_ratio": 0,
+      "analysis_summary": "Timeframe: 8h, Consensus: 30.8%",
+      "technical_signals": {
+        "rsi_signal": "Hold",
+        "macd_signal": "Hold",
+        "bb_signal": "Hold",
+        "stoch_signal": "Hold"
+      },
+      "commodity_signals": {},
+      "smc_signals": {
+        "order_block_signal": "Long",
+        "fvg_signal": "Hold",
+        "liquidity_signal": "Short",
+        "mitigation_signal": "Short",
+        "analysis": [
+          "📈 Bullish Order Block tại $4204.2000 - $4668.1800",
+          "📉 Liquidity High tại $4453.5700",
+          "📉 Bearish Mitigation tại $4283.3900"
+        ]
+      },
+      "price_action_signals": {}
+    },
+    "actual_result": null,
+    "accuracy": null,
+    "status": "pending"
+  },
+  {
+    "id": "ETH/USDT_1d_1758045357",
+    "symbol": "ETH/USDT",
+    "timeframe": "1d",
+    "timestamp": "2025-09-17T00:55:57.608077",
+    "current_price": 4487.97,
+    "prediction": {
+      "trend": "bullish",
+      "signal": "Long",
+      "confidence": 0.3076923076923077,
+      "entry_price": 4487.97,
+      "stop_loss": 4176.93096688999,
+      "take_profit": 5187.028107775028,
+      "risk_reward_ratio": 0,
+      "analysis_summary": "Timeframe: 1d, Consensus: 30.8%",
+      "technical_signals": {
+        "rsi_signal": "Hold",
+        "macd_signal": "Hold",
+        "bb_signal": "Hold",
+        "stoch_signal": "Hold"
+      },
+      "commodity_signals": {},
+      "smc_signals": {
+        "order_block_signal": "Long",
+        "fvg_signal": "Long",
+        "liquidity_signal": "Hold",
+        "mitigation_signal": "Hold",
+        "analysis": [
+          "📈 Bullish Order Block tại $3647.6300 - $4639.7000",
+          "📈 Bullish FVG tại $4481.0900 - $4605.0000"
+        ]
+      },
+      "price_action_signals": {}
+    },
+    "actual_result": null,
+    "accuracy": null,
+    "status": "pending"
   }
 ]

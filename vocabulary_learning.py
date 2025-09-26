@@ -2611,43 +2611,40 @@ VOCABULARY_DATABASE = [
 ]
 
 def get_sequential_vocabulary_words(count=5):
-    """Lấy từ vựng theo thứ tự lần lượt và lưu vị trí hiện tại"""
+    """Lấy từ vựng theo thứ tự dựa trên ngày tháng để tránh trùng lặp"""
     try:
-        # Đọc vị trí hiện tại từ file
-        progress_file = "vocabulary_progress.json"
+        # Sử dụng ngày tháng để tính toán vị trí bắt đầu
+        # Mỗi ngày sẽ có một vị trí bắt đầu khác nhau
+        now = datetime.now()
         
-        if os.path.exists(progress_file):
-            with open(progress_file, 'r', encoding='utf-8') as f:
-                progress = json.load(f)
-                current_index = progress.get('current_index', 0)
-        else:
-            current_index = 0
+        # Tính số ngày từ ngày 1/1/2024 để có một chuỗi số ổn định
+        start_date = datetime(2024, 1, 1)
+        days_since_start = (now - start_date).days
+        
+        # Tính vị trí bắt đầu dựa trên ngày và giờ
+        # Mỗi ngày có 3 lần gửi (6h, 14h, 22h UTC)
+        hour = now.hour
+        if hour < 10:  # 6h UTC
+            session = 0
+        elif hour < 18:  # 14h UTC  
+            session = 1
+        else:  # 22h UTC
+            session = 2
+            
+        # Tính vị trí bắt đầu: mỗi ngày có 3 session, mỗi session 5 từ
+        words_per_day = 15  # 3 sessions × 5 words
+        current_index = (days_since_start * words_per_day) + (session * count)
         
         # Lấy từ vựng theo thứ tự
         words = []
         total_words = len(VOCABULARY_DATABASE)
         
         for i in range(count):
-            if current_index >= total_words:
-                # Đã hết từ vựng, bắt đầu lại từ đầu
-                current_index = 0
-                logger.info("🔄 Đã học hết từ vựng, bắt đầu lại từ đầu!")
-            
-            words.append(VOCABULARY_DATABASE[current_index])
-            current_index += 1
+            # Sử dụng modulo để quay vòng khi hết từ vựng
+            word_index = (current_index + i) % total_words
+            words.append(VOCABULARY_DATABASE[word_index])
         
-        # Lưu vị trí hiện tại
-        progress_data = {
-            'current_index': current_index,
-            'last_updated': datetime.now().isoformat(),
-            'total_words': total_words,
-            'words_sent': count
-        }
-        
-        with open(progress_file, 'w', encoding='utf-8') as f:
-            json.dump(progress_data, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"📚 Đã gửi {count} từ vựng, vị trí hiện tại: {current_index}/{total_words}")
+        logger.info(f"📚 Đã gửi {count} từ vựng, vị trí bắt đầu: {current_index}, ngày: {now.strftime('%d/%m/%Y')}, giờ: {now.hour}h")
         return words
         
     except Exception as e:
@@ -2704,36 +2701,41 @@ def send_vocabulary_lesson():
 
 
 def get_vocabulary_progress():
-    """Lấy tiến độ học từ vựng"""
+    """Lấy tiến độ học từ vựng dựa trên ngày tháng"""
     try:
-        progress_file = "vocabulary_progress.json"
+        now = datetime.now()
+        start_date = datetime(2024, 1, 1)
+        days_since_start = (now - start_date).days
         
-        if os.path.exists(progress_file):
-            with open(progress_file, 'r', encoding='utf-8') as f:
-                progress = json.load(f)
-                return progress
-        else:
-            return {
-                'current_index': 0,
-                'last_updated': 'Chưa bắt đầu',
-                'total_words': len(VOCABULARY_DATABASE),
-                'words_sent': 0
-            }
+        # Tính session hiện tại
+        hour = now.hour
+        if hour < 10:  # 6h UTC
+            session = 0
+        elif hour < 18:  # 14h UTC  
+            session = 1
+        else:  # 22h UTC
+            session = 2
+            
+        words_per_day = 15  # 3 sessions × 5 words
+        current_index = (days_since_start * words_per_day) + (session * 5)
+        
+        return {
+            'current_index': current_index,
+            'last_updated': now.isoformat(),
+            'total_words': len(VOCABULARY_DATABASE),
+            'words_sent': 5,
+            'days_since_start': days_since_start,
+            'current_session': session,
+            'current_hour': hour
+        }
     except Exception as e:
         logger.error(f"❌ Lỗi khi đọc tiến độ: {e}")
         return None
 
 def reset_vocabulary_progress():
-    """Reset tiến độ học từ vựng về đầu"""
-    try:
-        progress_file = "vocabulary_progress.json"
-        if os.path.exists(progress_file):
-            os.remove(progress_file)
-        logger.info("🔄 Đã reset tiến độ học từ vựng về đầu")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Lỗi khi reset tiến độ: {e}")
-        return False
+    """Reset tiến độ học từ vựng về đầu (không cần thiết với logic mới)"""
+    logger.info("🔄 Logic mới không cần reset, tiến độ được tính dựa trên ngày tháng")
+    return True
 
 if __name__ == "__main__":
     # Test function

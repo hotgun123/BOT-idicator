@@ -2615,17 +2615,36 @@ def get_sequential_vocabulary_words(count=5):
     try:
         # Đọc vị trí hiện tại từ file
         progress_file = "vocabulary_progress.json"
+        total_words = len(VOCABULARY_DATABASE)
         
+        # Kiểm tra nếu đang chạy trên GitHub Actions
+        is_github_actions = os.getenv('GITHUB_ACTIONS') == 'true'
+        
+        # Đọc progress hiện tại
         if os.path.exists(progress_file):
-            with open(progress_file, 'r', encoding='utf-8') as f:
-                progress = json.load(f)
-                current_index = progress.get('current_index', 0)
+            try:
+                with open(progress_file, 'r', encoding='utf-8') as f:
+                    progress = json.load(f)
+                    current_index = progress.get('current_index', 0)
+                    logger.info(f"📖 Đọc progress từ file: index {current_index}")
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"⚠️ Lỗi đọc file progress, bắt đầu từ đầu: {e}")
+                current_index = 0
         else:
             current_index = 0
+            logger.info("📝 File progress chưa tồn tại, bắt đầu từ đầu")
+            
+            # Nếu đang chạy trên GitHub Actions, thử tải progress từ GitHub
+            if is_github_actions:
+                current_index = get_progress_from_github()
+                if current_index is not None:
+                    logger.info(f"📥 Đã tải progress từ GitHub: index {current_index}")
+                else:
+                    logger.info("📝 Không tìm thấy progress trên GitHub, bắt đầu từ đầu")
         
         # Lấy từ vựng theo thứ tự
         words = []
-        total_words = len(VOCABULARY_DATABASE)
+        start_index = current_index
         
         for i in range(count):
             if current_index >= total_words:
@@ -2636,23 +2655,37 @@ def get_sequential_vocabulary_words(count=5):
             words.append(VOCABULARY_DATABASE[current_index])
             current_index += 1
         
-        # Lưu vị trí hiện tại
-        progress_data = {
-            'current_index': current_index,
-            'last_updated': datetime.now().isoformat(),
-            'total_words': total_words,
-            'words_sent': count
-        }
+        # Lưu vị trí hiện tại (chỉ lưu nếu đã lấy được từ vựng)
+        try:
+            progress_data = {
+                'current_index': current_index,
+                'last_updated': datetime.now().isoformat(),
+                'total_words': total_words,
+                'words_sent': count,
+                'start_index': start_index,
+                'words_sent_this_time': [w['word'] for w in words]
+            }
+            
+            # Lưu local file
+            with open(progress_file, 'w', encoding='utf-8') as f:
+                json.dump(progress_data, f, ensure_ascii=False, indent=2)
+            
+            # Nếu đang chạy trên GitHub Actions, lưu lên GitHub
+            if is_github_actions:
+                save_progress_to_github(progress_data)
+            
+            logger.info(f"📚 Đã gửi {count} từ vựng từ index {start_index} đến {current_index-1}")
+            logger.info(f"📝 Từ vựng đã gửi: {[w['word'] for w in words]}")
+            
+        except Exception as save_error:
+            logger.error(f"❌ Lỗi khi lưu progress: {save_error}")
         
-        with open(progress_file, 'w', encoding='utf-8') as f:
-            json.dump(progress_data, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"📚 Đã gửi {count} từ vựng, vị trí hiện tại: {current_index}/{total_words}")
         return words
         
     except Exception as e:
         logger.error(f"❌ Lỗi khi lấy từ vựng theo thứ tự: {e}")
         # Fallback về random nếu có lỗi
+        logger.warning("🔄 Fallback về random selection")
         return random.sample(VOCABULARY_DATABASE, min(count, len(VOCABULARY_DATABASE)))
 
 def format_vocabulary_message(words):
@@ -2735,13 +2768,128 @@ def reset_vocabulary_progress():
         logger.error(f"❌ Lỗi khi reset tiến độ: {e}")
         return False
 
+def debug_vocabulary_progress():
+    """Debug thông tin progress hiện tại"""
+    try:
+        progress_file = "vocabulary_progress.json"
+        
+        if os.path.exists(progress_file):
+            with open(progress_file, 'r', encoding='utf-8') as f:
+                progress = json.load(f)
+                logger.info(f"🔍 Debug progress: {progress}")
+                return progress
+        else:
+            logger.info("🔍 File progress không tồn tại")
+            return None
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi debug progress: {e}")
+        return None
+
+def get_progress_from_github():
+    """Lấy progress từ GitHub repository"""
+    try:
+        import requests
+        
+        # Lấy thông tin repository từ environment variables
+        github_token = os.getenv('GITHUB_TOKEN')
+        github_repo = os.getenv('GITHUB_REPOSITORY')  # format: owner/repo
+        
+        if not github_token or not github_repo:
+            logger.warning("⚠️ Không có GitHub token hoặc repository info")
+            return None
+        
+        # Tải file progress từ GitHub
+        url = f"https://api.github.com/repos/{github_repo}/contents/vocabulary_progress.json"
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            content = data['content']
+            # Decode base64 content
+            import base64
+            progress_data = json.loads(base64.b64decode(content).decode('utf-8'))
+            return progress_data.get('current_index', 0)
+        else:
+            logger.warning(f"⚠️ Không thể tải progress từ GitHub: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi tải progress từ GitHub: {e}")
+        return None
+
+def save_progress_to_github(progress_data):
+    """Lưu progress lên GitHub repository"""
+    try:
+        import requests
+        import base64
+        
+        # Lấy thông tin repository từ environment variables
+        github_token = os.getenv('GITHUB_TOKEN')
+        github_repo = os.getenv('GITHUB_REPOSITORY')
+        
+        if not github_token or not github_repo:
+            logger.warning("⚠️ Không có GitHub token hoặc repository info")
+            return False
+        
+        # Kiểm tra file hiện tại trên GitHub
+        url = f"https://api.github.com/repos/{github_repo}/contents/vocabulary_progress.json"
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        # Lấy SHA của file hiện tại (nếu có)
+        response = requests.get(url, headers=headers, timeout=10)
+        sha = None
+        if response.status_code == 200:
+            sha = response.json()['sha']
+        
+        # Tạo content mới
+        content = json.dumps(progress_data, ensure_ascii=False, indent=2)
+        encoded_content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+        
+        # Commit file lên GitHub
+        data = {
+            'message': f'Update vocabulary progress - {progress_data.get("last_updated", "")}',
+            'content': encoded_content,
+            'sha': sha  # None nếu file chưa tồn tại
+        }
+        
+        response = requests.put(url, headers=headers, json=data, timeout=10)
+        
+        if response.status_code in [200, 201]:
+            logger.info("✅ Đã lưu progress lên GitHub thành công")
+            return True
+        else:
+            logger.error(f"❌ Lỗi khi lưu progress lên GitHub: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi lưu progress lên GitHub: {e}")
+        return False
+
 if __name__ == "__main__":
     # Test function
     print("🧪 Testing vocabulary learning module...")
     
+    # Debug current progress
+    print("\n🔍 Current progress:")
+    debug_vocabulary_progress()
+    
     # Test getting sequential words
+    print("\n📚 Testing sequential words:")
     words = get_sequential_vocabulary_words(3)
     print(f"📚 Sequential words: {[w['word'] for w in words]}")
+    
+    # Test again to see if it progresses
+    print("\n📚 Testing again:")
+    words2 = get_sequential_vocabulary_words(3)
+    print(f"📚 Sequential words (2nd time): {[w['word'] for w in words2]}")
     
     # Test formatting message
     message = format_vocabulary_message(words)

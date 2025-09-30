@@ -5,8 +5,8 @@ VOCABULARY_CHAT_ID = "1866335373"
 # Cấu hình lịch gửi từ vựng
 VOCABULARY_SCHEDULE = {
     'enabled': True,
-    'interval_hours': 8,  # Gửi mỗi 8 giờ
-    'times': [6, 14, 22],  # Giờ gửi (UTC) - 3 lần/ngày
+    'interval_hours': 12,  # Gửi mỗi 12 giờ
+    'times': [8, 20],  # Giờ gửi (UTC) - 2 lần/ngày
     'words_per_lesson': 5  # 5 từ mỗi bài
 }
 

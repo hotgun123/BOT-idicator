@@ -2,8 +2,8 @@ name: Vocabulary Bot
 
 on:
   schedule:
-    # Chạy 3 lần mỗi ngày: 6h, 14h, 22h UTC
-    - cron: '0 6,14,22 * * *'
+    # Chạy 2 lần mỗi ngày: 8h, 20h UTC
+    - cron: '0 8,20 * * *'
   workflow_dispatch:  # Cho phép chạy thủ công
   push:
     branches: [ main, master ]

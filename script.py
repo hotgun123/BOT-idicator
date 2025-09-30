@@ -116,7 +116,7 @@ RETRY_ATTEMPTS = 2
 # Cấu hình Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "7496162935:AAGncIsO4q18cOWRGpK0vYb_5zWxYNEgWKQ")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1866335373")
-TELEGRAM_REPORT_INTERVAL = 7200  # 2 tiếng = 7200 giây
+TELEGRAM_REPORT_INTERVAL = 14400  # 4 tiếng = 14400 giây (6 lần/ngày)
 
 # Cấu hình cho hệ thống theo dõi dự đoán
 PREDICTION_DATA_DIR = "prediction_data"
@@ -5155,23 +5155,23 @@ def display_ml_features_info():
         ]
     }
     
-    print("\n🤖 MACHINE LEARNING FEATURES (40+ Features)")
+    print("\n[ROBOT] MACHINE LEARNING FEATURES (40+ Features)")
     print("=" * 50)
     
     total_features = 0
     for category, features in features_info.items():
-        print(f"\n📊 {category}:")
+        print(f"\n[CHART] {category}:")
         for feature in features:
             print(f"   • {feature}")
         total_features += len(features)
     
-    print(f"\n📈 Tổng cộng: {total_features} features")
-    print("🎯 Target: Next period price direction (1 = Up, 0 = Down)")
-    print("📊 Training Data: 5000 historical candles from Binance API")
-    print("🤖 Models: Random Forest, XGBoost, LightGBM, Gradient Boosting, Logistic Regression, SVM")
-    print("🔄 Auto-training: Every 24 hours")
-    print("💾 Data Storage: Historical data cached locally")
-    print("🎯 Advanced Support/Resistance: Fibonacci, Pivot Points, Swing Levels, Volume Analysis, Psychological Levels")
+    print(f"\n[CHART] Total: {total_features} features")
+    print("[TARGET] Target: Next period price direction (1 = Up, 0 = Down)")
+    print("[DATA] Training Data: 5000 historical candles from Binance API")
+    print("[ROBOT] Models: Random Forest, XGBoost, LightGBM, Gradient Boosting, Logistic Regression, SVM")
+    print("[AUTO] Auto-training: Every 24 hours")
+    print("[STORAGE] Data Storage: Historical data cached locally")
+    print("[LEVELS] Advanced Support/Resistance: Fibonacci, Pivot Points, Swing Levels, Volume Analysis, Psychological Levels")
 
 def get_ml_training_status():
     """Kiểm tra trạng thái training ML models và dữ liệu"""
@@ -5847,10 +5847,10 @@ def main():
     # Kiểm tra trạng thái ML training và dữ liệu
     ml_status = get_ml_training_status()
     if ml_status:
-        print(f"\n📊 ML Training Status:")
-        print(f"✅ Models trained: {len(ml_status['models_trained'])}")
-        print(f"❌ Models missing: {len(ml_status['models_missing'])}")
-        print(f"📁 Data files: {len(ml_status['data_files'])}")
+        print(f"\n[STATUS] ML Training Status:")
+        print(f"[OK] Models trained: {len(ml_status['models_trained'])}")
+        print(f"[MISSING] Models missing: {len(ml_status['models_missing'])}")
+        print(f"[FILES] Data files: {len(ml_status['data_files'])}")
     
     # Hiển thị tóm tắt dữ liệu
     display_data_update_summary()
